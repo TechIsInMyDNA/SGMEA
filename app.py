@@ -43,7 +43,7 @@ current_time = datetime.now(india).strftime("%Y-%m-%d %H:%M:%S")
 
 new_data = pd.DataFrame([[name, current_time]], columns=["Name", "Time"])
 
-    ws.append([name,action,time])
+    ws.append([name, action, time])
     wb.save(FILE)
 
 
