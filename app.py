@@ -43,6 +43,7 @@ def save_data(name, action):
 
     new_data = pd.DataFrame([[name, current_time]], columns=["Name", "Time"])
 
+    time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     ws.append([name, action, time])
     wb.save(FILE)
 
