@@ -39,9 +39,9 @@ def save_data(name, action):
     ws = wb.active
 
     india = pytz.timezone("Asia/Kolkata")
-current_time = datetime.now(india).strftime("%Y-%m-%d %H:%M:%S")
+    current_time = datetime.now(india).strftime("%Y-%m-%d %H:%M:%S")
 
-new_data = pd.DataFrame([[name, current_time]], columns=["Name", "Time"])
+    new_data = pd.DataFrame([[name, current_time]], columns=["Name", "Time"])
 
     ws.append([name, action, time])
     wb.save(FILE)
