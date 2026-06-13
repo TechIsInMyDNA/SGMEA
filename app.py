@@ -6,7 +6,9 @@ from datetime import datetime
 app = Flask(__name__)
 
 # 🔥 STORAGE PATH (Termux / Android)
-BASE_DIR = "/storage/emulated/0/SGMEA"
+import os
+
+BASE_DIR = os.path.join(os.getcwd(), "SGMEA")
 os.makedirs(BASE_DIR, exist_ok=True)
 
 FILE = os.path.join(BASE_DIR, "Records.xlsx")
