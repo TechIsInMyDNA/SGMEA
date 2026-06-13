@@ -5,6 +5,11 @@ from datetime import datetime
 
 app = Flask(__name__)
 
+from flask import send_file
+
+@app.route("/download")
+def download():
+    return send_file("SGMEA/Records.xlsx", as_attachment=True)
 # 🔥 STORAGE PATH (Termux / Android)
 import os
 
