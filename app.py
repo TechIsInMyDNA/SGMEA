@@ -2,6 +2,7 @@ from flask import Flask, request
 from openpyxl import Workbook, load_workbook
 import os
 from datetime import datetime
+import pytz
 
 app = Flask(__name__)
 
@@ -37,7 +38,10 @@ def save_data(name, action):
     wb = load_workbook(FILE)
     ws = wb.active
 
-    time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    india = pytz.timezone("Asia/Kolkata")
+current_time = datetime.now(india).strftime("%Y-%m-%d %H:%M:%S")
+
+new_data = pd.DataFrame([[name, current_time]], columns=["Name", "Time"])
 
     ws.append([name, action, time])
     wb.save(FILE)
