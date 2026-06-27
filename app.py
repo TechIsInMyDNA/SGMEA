@@ -24,7 +24,7 @@ USERS = {
 DATABASE_URL = os.environ.get("postgres.ecadhnrxjutgdkcljipu:[SGMEARocks144]@aws-1-ap-south-1.pooler.supabase.com:6543/postgres")
 
 if not DATABASE_URL:
-    raise Exception("DATABASE_URL Environment Variable Missing")
+    raise Exception("DATABASE_URL postgres.ecadhnrxjutgdkcljipu:[SGMEARocks144]@aws-1-ap-south-1.pooler.supabase.com:6543/postgres")
 
 # ---------------------------------
 # CONNECT DATABASE
