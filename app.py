@@ -31,10 +31,10 @@ if not DATABASE_URL:
 # ---------------------------------
 
 def get_connection():
-
     return psycopg2.connect(
         DATABASE_URL,
-        cursor_factory=RealDictCursor
+        cursor_factory=RealDictCursor,
+        sslmode="require"
     )
 
 # ---------------------------------
