@@ -1,124 +1,300 @@
-from flask import Flask, request, send_file, redirect
-import sqlite3
-import os
+from flask import Flask, request, send_file
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from openpyxl import Workbook
 from datetime import datetime
 import pytz
-from openpyxl import Workbook
+import os
 
 app = Flask(__name__)
 
-# -----------------------------
-# STORAGE
-# -----------------------------
-BASE_DIR = os.path.join(os.getcwd(), "SGMEA")
-os.makedirs(BASE_DIR, exist_ok=True)
+# ---------------------------------
+# USERS
+# ---------------------------------
 
-DB_FILE = os.path.join(BASE_DIR, "attendance.db")
-EXCEL_FILE = os.path.join(BASE_DIR, "Records.xlsx")
-
-# -----------------------------
-# USERS + PIN
-# -----------------------------
 USERS = {
     "Gaurav": "1234",
     "Arshi": "5678"
 }
 
-# -----------------------------
-# DATABASE
-# -----------------------------
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
+# ---------------------------------
+# DATABASE URL
+# ---------------------------------
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise Exception("DATABASE_URL Environment Variable Missing")
+
+# ---------------------------------
+# CONNECT DATABASE
+# ---------------------------------
+
+def get_connection():
+
+    return psycopg2.connect(
+        DATABASE_URL,
+        cursor_factory=RealDictCursor
+    )
+
+# ---------------------------------
+# CREATE TABLE
+# ---------------------------------
+
+def create_table():
+
+    conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
+
     CREATE TABLE IF NOT EXISTS attendance(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        action TEXT,
-        date TEXT,
-        time TEXT,
-        timestamp TEXT
+
+        id SERIAL PRIMARY KEY,
+
+        name VARCHAR(100) NOT NULL,
+
+        action VARCHAR(20) NOT NULL,
+
+        attendance_date DATE NOT NULL,
+
+        attendance_time TIME NOT NULL,
+
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
     )
+
     """)
 
     conn.commit()
+
+    cur.close()
+
     conn.close()
 
-init_db()
+create_table()
 
-# -----------------------------
+# ---------------------------------
+# INDIA TIME
+# ---------------------------------
+
+india = pytz.timezone("Asia/Kolkata")
+# ---------------------------------
 # SAVE ATTENDANCE
-# -----------------------------
+# ---------------------------------
+
 def save_data(name, action):
 
-    india = pytz.timezone("Asia/Kolkata")
-    now = datetime.now(india)
-
-    date = now.strftime("%d-%m-%Y")
-    time = now.strftime("%I:%M:%S %p")
-    timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
-
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("""
-    INSERT INTO attendance(name,action,date,time,timestamp)
-    VALUES(?,?,?,?,?)
-    """,(name,action,date,time,timestamp))
+    try:
 
-    conn.commit()
-    conn.close()
+        now = datetime.now(india)
 
-# -----------------------------
+        attendance_date = now.date()
+
+        attendance_time = now.time().replace(microsecond=0)
+
+        # ---------------------------------
+        # DUPLICATE CHECK
+        # Same User + Same Action
+        # Within Last 1 Minute
+        # ---------------------------------
+
+        cur.execute("""
+
+        SELECT id
+
+        FROM attendance
+
+        WHERE
+
+        name=%s
+
+        AND action=%s
+
+        AND created_at >= NOW() - INTERVAL '1 minute'
+
+        LIMIT 1
+
+        """,
+
+        (name, action))
+
+        duplicate = cur.fetchone()
+
+        if duplicate:
+
+            cur.close()
+
+            conn.close()
+
+            return False
+
+        # ---------------------------------
+        # INSERT RECORD
+        # ---------------------------------
+
+        cur.execute("""
+
+        INSERT INTO attendance
+
+        (
+
+            name,
+
+            action,
+
+            attendance_date,
+
+            attendance_time
+
+        )
+
+        VALUES
+
+        (
+
+            %s,
+
+            %s,
+
+            %s,
+
+            %s
+
+        )
+
+        """,
+
+        (
+
+            name,
+
+            action,
+
+            attendance_date,
+
+            attendance_time
+
+        ))
+
+        conn.commit()
+
+        cur.close()
+
+        conn.close()
+
+        return True
+
+    except Exception as e:
+
+        conn.rollback()
+
+        cur.close()
+
+        conn.close()
+
+        print(e)
+
+        return False
+
+
+# ---------------------------------
+# VERIFY PIN
+# ---------------------------------
+
+def verify_pin(name, pin):
+
+    if name not in USERS:
+
+        return False
+
+    if USERS[name] != pin:
+
+        return False
+
+    return True
+    # ---------------------------------
 # HOME PAGE
-# -----------------------------
+# ---------------------------------
+
 @app.route("/")
 def home():
 
     options = ""
 
-    for user in USERS:
-        options += f"<option>{user}</option>"
+    for user in USERS.keys():
+        options += f'<option value="{user}">{user}</option>'
 
     return f"""
+
+<!DOCTYPE html>
+
 <html>
 
 <head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <title>SGMEA Attendance</title>
 
 <style>
 
+*{{
+margin:0;
+padding:0;
+box-sizing:border-box;
+font-family:Arial,sans-serif;
+}}
+
 body{{
-background:#f3f5f8;
-font-family:Arial;
+background:#f2f5f9;
 display:flex;
 justify-content:center;
 align-items:center;
 height:100vh;
-margin:0;
 }}
 
 .card{{
 background:white;
+width:360px;
 padding:25px;
-width:340px;
 border-radius:15px;
-box-shadow:0 0 15px rgba(0,0,0,.2);
+box-shadow:0 10px 25px rgba(0,0,0,.15);
 }}
 
-select,input,button{{
+h2{{
+text-align:center;
+margin-bottom:20px;
+color:#0b5ed7;
+}}
+
+select,
+input{{
 width:100%;
 padding:12px;
 margin-top:10px;
 border-radius:10px;
-border:none;
+border:1px solid #ccc;
 font-size:16px;
 }}
 
+button{{
+width:100%;
+padding:13px;
+margin-top:12px;
+border:none;
+border-radius:10px;
+font-size:16px;
+cursor:pointer;
+}}
+
 .in{{
-background:#28a745;
+background:#198754;
 color:white;
 }}
 
@@ -128,14 +304,21 @@ color:white;
 }}
 
 .download{{
-background:#007bff;
+background:#0d6efd;
 color:white;
 text-decoration:none;
 display:block;
-padding:12px;
-margin-top:12px;
 text-align:center;
+padding:13px;
+margin-top:12px;
 border-radius:10px;
+}}
+
+.footer{{
+margin-top:18px;
+text-align:center;
+font-size:13px;
+color:gray;
 }}
 
 </style>
@@ -146,11 +329,11 @@ border-radius:10px;
 
 <div class="card">
 
-<h2 align=center>SGMEA Attendance</h2>
+<h2>SGMEA Attendance</h2>
 
-<form action="/mark" method="post">
+<form action="/mark" method="POST">
 
-<select name="name">
+<select name="name" required>
 
 {options}
 
@@ -164,16 +347,22 @@ required>
 
 <button
 class="in"
+type="submit"
 name="action"
 value="Check In">
-Check In
+
+✅ Check In
+
 </button>
 
 <button
 class="out"
+type="submit"
 name="action"
 value="Check Out">
-Check Out
+
+❌ Check Out
+
 </button>
 
 </form>
@@ -181,67 +370,118 @@ Check Out
 <a
 class="download"
 href="/download">
-Download Excel
+
+📥 Download Attendance
+
 </a>
+
+<div class="footer">
+
+Powered by SGMEA
+
+</div>
 
 </div>
 
 </body>
 
 </html>
+
 """
-    # -----------------------------
+    # ---------------------------------
 # MARK ATTENDANCE
-# -----------------------------
+# ---------------------------------
+
 @app.route("/mark", methods=["POST"])
 def mark():
 
-    name = request.form["name"]
-    action = request.form["action"]
-    pin = request.form["pin"]
+    name = request.form.get("name", "").strip()
+    pin = request.form.get("pin", "").strip()
+    action = request.form.get("action", "").strip()
 
-    # PIN Verification
-    if name not in USERS or USERS[name] != pin:
+    # -------------------------------
+    # VALIDATION
+    # -------------------------------
+
+    if name == "" or pin == "" or action == "":
+
         return """
         <script>
-        alert("❌ Wrong PIN!");
+        alert("Please fill all fields.");
         window.location.href="/";
         </script>
         """
 
-    # Save Attendance
-    save_data(name, action)
+    # -------------------------------
+    # PIN CHECK
+    # -------------------------------
 
-    return """
-    <script>
-    alert("✅ Attendance Saved Successfully");
-    window.location.href="/";
-    </script>
-    """
+    if not verify_pin(name, pin):
 
+        return """
+        <script>
+        alert("Wrong PIN !");
+        window.location.href="/";
+        </script>
+        """
 
-# -----------------------------
+    # -------------------------------
+    # SAVE ATTENDANCE
+    # -------------------------------
+
+    saved = save_data(name, action)
+
+    if saved:
+
+        return f"""
+        <script>
+
+        alert("{name}\\n\\n{action} Successful.");
+
+        window.location.href="/";
+
+        </script>
+        """
+
+    else:
+
+        return f"""
+        <script>
+
+        alert("{name}\\n\\nDuplicate attendance detected.\\nPlease wait one minute.");
+
+        window.location.href="/";
+
+        </script>
+        """
+        # ---------------------------------
 # DOWNLOAD EXCEL
-# -----------------------------
+# ---------------------------------
+
 @app.route("/download")
 def download():
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
+
     SELECT
-    id,
-    name,
-    action,
-    date,
-    time
+
+        name,
+        action,
+        attendance_date,
+        attendance_time
+
     FROM attendance
-    ORDER BY id DESC
+
+    ORDER BY created_at DESC
+
     """)
 
-    rows = cur.fetchall()
+    records = cur.fetchall()
 
+    cur.close()
     conn.close()
 
     wb = Workbook()
@@ -249,76 +489,539 @@ def download():
 
     ws.title = "Attendance"
 
+    # -------------------------
+    # HEADER
+    # -------------------------
+
     ws.append([
+
         "Sr No",
-        "Name",
-        "Action",
+
+        "Member Name",
+
+        "Attendance",
+
         "Date",
+
         "Time"
+
     ])
+
+    # -------------------------
+    # DATA
+    # -------------------------
 
     sr = 1
 
-    for row in rows:
+    for row in records:
 
         ws.append([
+
             sr,
-            row[1],
-            row[2],
-            row[3],
-            row[4]
+
+            row["name"],
+
+            row["action"],
+
+            row["attendance_date"].strftime("%d-%m-%Y"),
+
+            row["attendance_time"].strftime("%I:%M:%S %p")
+
         ])
 
         sr += 1
 
-    # Auto Width
-    for column_cells in ws.columns:
+    # -------------------------
+    # AUTO WIDTH
+    # -------------------------
 
-        length = max(len(str(cell.value)) if cell.value else 0 for cell in column_cells)
+    for column in ws.columns:
 
-        ws.column_dimensions[column_cells[0].column_letter].width = length + 5
+        length = max(
 
-    wb.save(EXCEL_FILE)
+            len(str(cell.value))
+
+            if cell.value else 0
+
+            for cell in column
+
+        )
+
+        ws.column_dimensions[
+            column[0].column_letter
+        ].width = length + 5
+
+    # -------------------------
+    # SAVE FILE
+    # -------------------------
+
+    DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "downloads")
+
+    os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+
+    FILE_PATH = os.path.join(
+
+        DOWNLOAD_FOLDER,
+
+        "SGMEA_Attendance.xlsx"
+
+    )
+
+    wb.save(FILE_PATH)
+
+    wb.close()
 
     return send_file(
-        EXCEL_FILE,
+
+        FILE_PATH,
+
         as_attachment=True,
+
         download_name="SGMEA_Attendance.xlsx"
+
     )
-    # -----------------------------
-# HEALTH CHECK (Render)
-# -----------------------------
+    # ---------------------------------
+# DASHBOARD
+# ---------------------------------
+
+@app.route("/dashboard")
+def dashboard():
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    # Total Records
+    cur.execute("SELECT COUNT(*) AS total FROM attendance")
+    total = cur.fetchone()["total"]
+
+    # Total Check In
+    cur.execute("""
+        SELECT COUNT(*) AS total
+        FROM attendance
+        WHERE action='Check In'
+    """)
+    checkin = cur.fetchone()["total"]
+
+    # Total Check Out
+    cur.execute("""
+        SELECT COUNT(*) AS total
+        FROM attendance
+        WHERE action='Check Out'
+    """)
+    checkout = cur.fetchone()["total"]
+
+    # Today's Attendance
+    cur.execute("""
+        SELECT COUNT(*) AS total
+        FROM attendance
+        WHERE attendance_date=CURRENT_DATE
+    """)
+    today = cur.fetchone()["total"]
+
+    cur.close()
+    conn.close()
+
+    return f"""
+
+    <html>
+
+    <head>
+
+    <title>SGMEA Dashboard</title>
+
+    <style>
+
+    body{{
+        font-family:Arial;
+        background:#f3f5f7;
+        padding:30px;
+    }}
+
+    .box{{
+        background:white;
+        padding:20px;
+        margin:15px;
+        border-radius:15px;
+        box-shadow:0 0 10px rgba(0,0,0,.15);
+        font-size:22px;
+    }}
+
+    a{{
+        text-decoration:none;
+        font-size:18px;
+    }}
+
+    </style>
+
+    </head>
+
+    <body>
+
+    <h2>SGMEA Attendance Dashboard</h2>
+
+    <div class="box">
+
+    📋 Total Records : <b>{total}</b>
+
+    </div>
+
+    <div class="box">
+
+    ✅ Total Check In : <b>{checkin}</b>
+
+    </div>
+
+    <div class="box">
+
+    ❌ Total Check Out : <b>{checkout}</b>
+
+    </div>
+
+    <div class="box">
+
+    📅 Today's Attendance : <b>{today}</b>
+
+    </div>
+
+    <br>
+
+    <a href="/">⬅ Back to Attendance</a>
+
+    </body>
+
+    </html>
+
+    """
+
+
+# ---------------------------------
+# HEALTH CHECK
+# ---------------------------------
+
 @app.route("/health")
 def health():
-    return "OK"
+
+    return {
+
+        "status":"online",
+
+        "database":"connected"
+
+    }
 
 
-# -----------------------------
-# RECORD COUNT (Optional)
-# -----------------------------
+# ---------------------------------
+# TOTAL RECORD API
+# ---------------------------------
+
 @app.route("/count")
 def count():
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_connection()
+
     cur = conn.cursor()
 
-    cur.execute("SELECT COUNT(*) FROM attendance")
-    total = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) AS total FROM attendance")
+
+    total = cur.fetchone()["total"]
+
+    cur.close()
 
     conn.close()
 
-    return f"Total Attendance Records : {total}"
+    return {
+
+        "records":total
+
+    }
+    # ---------------------------------
+# SEARCH MEMBER ATTENDANCE
+# ---------------------------------
+
+@app.route("/search", methods=["GET", "POST"])
+def search():
+
+    if request.method == "GET":
+
+        options = ""
+
+        for user in USERS.keys():
+            options += f'<option value="{user}">{user}</option>'
+
+        return f"""
+
+        <html>
+
+        <head>
+
+        <title>Search Attendance</title>
+
+        <style>
+
+        body{{
+        font-family:Arial;
+        background:#f2f2f2;
+        }}
+
+        .box{{
+        width:350px;
+        background:white;
+        margin:80px auto;
+        padding:20px;
+        border-radius:15px;
+        box-shadow:0 0 10px rgba(0,0,0,.2);
+        }}
+
+        select,button{{
+        width:100%;
+        padding:12px;
+        margin-top:10px;
+        border-radius:10px;
+        }}
+
+        </style>
+
+        </head>
+
+        <body>
+
+        <div class="box">
+
+        <h2 align="center">Search Attendance</h2>
+
+        <form method="POST">
+
+        <select name="member">
+
+        {options}
+
+        </select>
+
+        <button type="submit">
+
+        Search
+
+        </button>
+
+        </form>
+
+        </div>
+
+        </body>
+
+        </html>
+
+        """
+
+    member = request.form["member"]
+
+    conn = get_connection()
+
+    cur = conn.cursor()
+
+    cur.execute("""
+
+    SELECT
+
+    action,
+
+    attendance_date,
+
+    attendance_time
+
+    FROM attendance
+
+    WHERE name=%s
+
+    ORDER BY created_at DESC
+
+    """,(member,))
+
+    records = cur.fetchall()
+
+    cur.close()
+
+    conn.close()
+
+    rows = ""
+
+    sr = 1
+
+    for r in records:
+
+        rows += f"""
+
+        <tr>
+
+        <td>{sr}</td>
+
+        <td>{r['action']}</td>
+
+        <td>{r['attendance_date']}</td>
+
+        <td>{r['attendance_time']}</td>
+
+        </tr>
+
+        """
+
+        sr += 1
+
+    return f"""
+
+    <html>
+
+    <head>
+
+    <title>{member}</title>
+
+    <style>
+
+    body{{font-family:Arial;background:#f5f5f5;padding:20px;}}
+
+    table{{border-collapse:collapse;width:100%;background:white;}}
+
+    th,td{{border:1px solid #ddd;padding:10px;text-align:center;}}
+
+    th{{background:#0d6efd;color:white;}}
+
+    </style>
+
+    </head>
+
+    <body>
+
+    <h2>{member} Attendance History</h2>
+
+    <table>
+
+    <tr>
+
+    <th>Sr</th>
+
+    <th>Action</th>
+
+    <th>Date</th>
+
+    <th>Time</th>
+
+    </tr>
+
+    {rows}
+
+    </table>
+
+    <br>
+
+    <a href="/">⬅ Back</a>
+
+    </body>
+
+    </html>
+
+    """
+    # ---------------------------------
+# ERROR HANDLER
+# ---------------------------------
+
+@app.errorhandler(404)
+def page_not_found(e):
+
+    return """
+
+    <html>
+
+    <head>
+
+    <title>404</title>
+
+    <style>
+
+    body{
+
+        font-family:Arial;
+
+        background:#f5f5f5;
+
+        text-align:center;
+
+        padding-top:80px;
+
+    }
+
+    a{
+
+        text-decoration:none;
+
+        font-size:18px;
+
+    }
+
+    </style>
+
+    </head>
+
+    <body>
+
+    <h1>404</h1>
+
+    <h3>Page Not Found</h3>
+
+    <br>
+
+    <a href="/">🏠 Go Home</a>
+
+    </body>
+
+    </html>
+
+    """,404
 
 
-# -----------------------------
-# RUN APP
-# -----------------------------
+# ---------------------------------
+# 500 ERROR
+# ---------------------------------
+
+@app.errorhandler(500)
+def internal_error(e):
+
+    return """
+
+    <script>
+
+    alert("Internal Server Error");
+
+    window.location="/";
+
+    </script>
+
+    """,500
+
+
+# ---------------------------------
+# CLOSE DATABASE
+# ---------------------------------
+
+@app.teardown_appcontext
+def close_connection(exception):
+
+    pass
+
+
+# ---------------------------------
+# MAIN
+# ---------------------------------
+
 if __name__ == "__main__":
 
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT",5000))
 
     app.run(
+
         host="0.0.0.0",
+
         port=port,
+
         debug=False
+
     )
