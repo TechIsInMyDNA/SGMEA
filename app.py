@@ -15,8 +15,8 @@ app = Flask(__name__)
 USERS = {
     "Gaurav": "1234",
     "Arshi": "5678",
-    "Rahul Sharma": "9999",  # SGM 2.0 Candidate Example
-    "Priya Patel": "8888"   # SGM 2.0 Candidate Example
+      # SGM 2.0 Candidate Example
+      # SGM 2.0 Candidate Example
 }
 
 # ---------------------------------
