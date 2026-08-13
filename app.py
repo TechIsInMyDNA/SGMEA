@@ -27,7 +27,7 @@ def get_connection():
     )
 
 # ---------------------------------
-# CREATE TABLES (ATTENDANCE & USERS)
+# CREATE TABLES & INITIAL SEED DATA
 # ---------------------------------
 def init_db():
     conn = get_connection()
@@ -45,7 +45,7 @@ def init_db():
     );
     """)
 
-    # Dynamic Users Table (Owner Controlled)
+    # Users Table
     cur.execute("""
     CREATE TABLE IF NOT EXISTS users(
         id SERIAL PRIMARY KEY,
@@ -55,11 +55,14 @@ def init_db():
     );
     """)
 
-    # Seed Default Candidates if table is empty
+    # Setup Initial Users
     cur.execute("SELECT COUNT(*) as count FROM users;")
     if cur.fetchone()["count"] == 0:
-        cur.execute("INSERT INTO users (name, pin, role) VALUES (%s, %s, %s)", ("Gaurav", "1234", "Owner"))
-        cur.execute("INSERT INTO users (name, pin, role) VALUES (%s, %s, %s)", ("Arshi", "5678", "Candidate"))
+        # Owner Setup
+        cur.execute("INSERT INTO users (name, pin, role) VALUES (%s, %s, %s)", ("Shubham Agrawal SGM", "1441", "Owner"))
+        # Staff / Candidate Setup
+        cur.execute("INSERT INTO users (name, pin, role) VALUES (%s, %s, %s)", ("Gaurav", "1234", "Employee"))
+        cur.execute("INSERT INTO users (name, pin, role) VALUES (%s, %s, %s)", ("Arshi", "5678", "Employee"))
 
     conn.commit()
     cur.close()
@@ -162,14 +165,14 @@ body {
     padding: 20px;
 }
 .card {
-    background: rgba(30, 41, 59, 0.7);
+    background: rgba(30, 41, 59, 0.8);
     backdrop-filter: blur(16px);
     border: 1px solid rgba(255, 255, 255, 0.1);
     width: 100%;
     max-width: 420px;
     padding: 30px;
     border-radius: 20px;
-    box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+    box-shadow: 0 20px 40px rgba(0,0,0,0.5);
 }
 h2, h3 {
     text-align: center;
@@ -275,7 +278,7 @@ def home():
 <h2>🛡️ SGMEA Attendance</h2>
 <form action="/mark" method="POST">
 <select name="name" required>
-<option value="" disabled selected>Select Candidate / Employee</option>
+<option value="" disabled selected>Select Staff / Candidate</option>
 {options}
 </select>
 <input type="password" name="pin" placeholder="Enter Confidential PIN" required>
@@ -285,10 +288,10 @@ def home():
 
 <a class="download" href="/download">📥 Download Complete Excel</a>
 <a class="download" style="background:#475569; box-shadow:none;" href="/download_user">📊 Individual Member Report</a>
-<a class="owner-btn" href="/owner">👑 Owner Control Panel (Add Member)</a>
+<a class="owner-btn" href="/owner">👑 Owner Control (Shubham Agrawal SGM)</a>
 
 <div class="footer">
-Powered by SGMEA Cyber Platform
+Powered by SGMEA Platform
 </div>
 </div>
 </body>
@@ -296,7 +299,7 @@ Powered by SGMEA Cyber Platform
 """
 
 # ---------------------------------
-# OWNER / ADMIN PANEL (NEW FEATURE)
+# OWNER PANEL (SHUBHAM AGRAWAL SGM - PIN: 1441)
 # ---------------------------------
 @app.route("/owner", methods=["GET", "POST"])
 def owner():
@@ -306,9 +309,9 @@ def owner():
         new_pin = request.form.get("new_pin", "").strip()
         role = request.form.get("role", "Candidate").strip()
 
-        # Simple Master Owner Verification
-        if owner_pin != "1234":  # Default Owner Master PIN
-            return """<script>alert('Unauthorized Owner PIN!'); window.location.href='/owner';</script>"""
+        # MASTER OWNER PIN CHECK (1441)
+        if owner_pin != "1441":
+            return """<script>alert('Wrong Owner PIN! Access Denied.'); window.location.href='/owner';</script>"""
 
         if new_name and new_pin:
             try:
@@ -318,46 +321,47 @@ def owner():
                 conn.commit()
                 cur.close()
                 conn.close()
-                return f"""<script>alert('Member {new_name} Registered Successfully!'); window.location.href='/owner';</script>"""
+                return f"""<script>alert('Member "{new_name}" Registered Successfully!'); window.location.href='/owner';</script>"""
             except Exception as e:
-                return f"""<script>alert('Error: Member already exists or invalid data!'); window.location.href='/owner';</script>"""
+                return f"""<script>alert('Error: Name already exists!'); window.location.href='/owner';</script>"""
 
     users = get_users_map()
     user_rows = ""
-    for u, p in users.items():
-        user_rows += f"<tr><td style='padding:8px;'>{u}</td><td style='padding:8px;'>****</td></tr>"
+    for u in users.keys():
+        user_rows += f"<tr><td style='padding:8px; border-bottom:1px solid #1e293b;'>{u}</td></tr>"
 
     return f"""
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
-<title>SGMEA Owner Control</title>
+<title>Owner Panel - Shubham Agrawal SGM</title>
 {COMMON_STYLE}
 </head>
 <body>
 <div class="card">
 <h3>👑 Owner Admin Panel</h3>
+<p style="text-align:center; color:#94a3b8; font-size:13px; margin-bottom:15px;">Welcome Shubham Agrawal SGM</p>
+
 <form method="POST">
-<input type="password" name="owner_pin" placeholder="Enter Owner Master PIN" required>
-<input type="text" name="new_name" placeholder="Candidate / Employee Name" required>
-<input type="text" name="new_pin" placeholder="Assign PIN (e.g. 9988)" required>
+<input type="password" name="owner_pin" placeholder="Enter Owner Master PIN (1441)" required>
+<input type="text" name="new_name" placeholder="Staff / Candidate Name" required>
+<input type="text" name="new_pin" placeholder="Assign PIN for Member" required>
 <select name="role">
-    <option value="Candidate">D.Pharm Candidate</option>
     <option value="Employee">Staff Employee</option>
+    <option value="Candidate">D.Pharm Candidate</option>
 </select>
-<button class="in" type="submit">➕ Register New User</button>
+<button class="in" type="submit">➕ Register New Member</button>
 </form>
 
-<h4 style="margin-top:20px; color:#38bdf8; text-align:center;">Active Members List</h4>
-<div style="max-height:150px; overflow-y:auto; margin-top:10px; background:#0f172a; padding:10px; border-radius:10px;">
+<h4 style="margin-top:20px; color:#38bdf8; text-align:center;">Registered Staff & Candidates</h4>
+<div style="max-height:140px; overflow-y:auto; margin-top:10px; background:#0f172a; padding:10px; border-radius:10px; border:1px solid #334155;">
 <table style="width:100%; color:white; font-size:14px; text-align:left;">
-<tr><th>Name</th><th>Status</th></tr>
 {user_rows}
 </table>
 </div>
 
-<a href="/" class="download" style="background:#475569;">⬅ Back to Home</a>
+<a href="/" class="download" style="background:#475569; box-shadow:none;">⬅ Back to Portal</a>
 </div>
 </body>
 </html>
@@ -386,18 +390,13 @@ def mark():
         return f"""<script>alert("{name}\\n\\nDuplicate attendance detected.\\nPlease wait one minute."); window.location.href="/";</script>"""
 
 # ---------------------------------
-# ALL ATTENDANCE DOWNLOAD
+# EXCEL REPORTS & DASHBOARD
 # ---------------------------------
 @app.route("/download")
 def download():
     conn = get_connection()
     cur = conn.cursor()
-
-    cur.execute("""
-    SELECT name, action, attendance_date, attendance_time
-    FROM attendance
-    ORDER BY created_at DESC
-    """)
+    cur.execute("SELECT name, action, attendance_date, attendance_time FROM attendance ORDER BY created_at DESC")
     records = cur.fetchall()
     cur.close()
     conn.close()
@@ -405,18 +404,11 @@ def download():
     wb = Workbook()
     ws = wb.active
     ws.title = "Attendance"
-
     ws.append(["Sr No", "Member Name", "Attendance", "Date", "Time"])
 
     sr = 1
     for row in records:
-        ws.append([
-            sr,
-            row["name"],
-            row["action"],
-            row["attendance_date"].strftime("%d-%m-%Y"),
-            row["attendance_time"].strftime("%I:%M:%S %p")
-        ])
+        ws.append([sr, row["name"], row["action"], row["attendance_date"].strftime("%d-%m-%Y"), row["attendance_time"].strftime("%I:%M:%S %p")])
         sr += 1
 
     for column in ws.columns:
@@ -426,15 +418,10 @@ def download():
     DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "downloads")
     os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
     FILE_PATH = os.path.join(DOWNLOAD_FOLDER, "SGMEA_Attendance.xlsx")
-
     wb.save(FILE_PATH)
     wb.close()
-
     return send_file(FILE_PATH, as_attachment=True, download_name="SGMEA_Attendance.xlsx")
 
-# ---------------------------------
-# INDIVIDUAL MEMBER EXCEL EXPORT
-# ---------------------------------
 @app.route("/download_user", methods=["GET", "POST"])
 def download_user():
     users = get_users_map()
@@ -442,40 +429,18 @@ def download_user():
         options = ""
         for user in users.keys():
             options += f'<option value="{user}">{user}</option>'
-
         return f"""
-        <html>
-        <head>
-        <title>Export Individual Attendance</title>
-        {COMMON_STYLE}
-        </head>
-        <body>
-        <div class="card">
-        <h3>Export Candidate Excel</h3>
-        <form method="POST">
-        <select name="member">
-        {options}
-        </select>
-        <button class="in" type="submit">📥 Download Excel Report</button>
-        </form>
-        <a href="/" class="download" style="background:#475569;">⬅ Back</a>
-        </div>
-        </body>
-        </html>
+        <html><head><title>Export Individual Attendance</title>{COMMON_STYLE}</head>
+        <body><div class="card"><h3>Export Individual Report</h3>
+        <form method="POST"><select name="member">{options}</select>
+        <button class="in" type="submit">📥 Download Excel Report</button></form>
+        <a href="/" class="download" style="background:#475569; box-shadow:none;">⬅ Back</a></div></body></html>
         """
 
     member = request.form.get("member")
-
     conn = get_connection()
     cur = conn.cursor()
-
-    cur.execute("""
-    SELECT action, attendance_date, attendance_time
-    FROM attendance
-    WHERE name=%s
-    ORDER BY attendance_date ASC, attendance_time ASC
-    """, (member,))
-
+    cur.execute("SELECT action, attendance_date, attendance_time FROM attendance WHERE name=%s ORDER BY attendance_date ASC, attendance_time ASC", (member,))
     records = cur.fetchall()
     cur.close()
     conn.close()
@@ -485,7 +450,6 @@ def download_user():
         d = r["attendance_date"]
         if d not in daily_data:
             daily_data[d] = {"in": None, "out": None}
-        
         if r["action"] == "Check In" and not daily_data[d]["in"]:
             daily_data[d]["in"] = r["attendance_time"]
         elif r["action"] == "Check Out":
@@ -494,14 +458,12 @@ def download_user():
     wb = Workbook()
     ws = wb.active
     ws.title = f"{member}_Report"
-
-    ws.append(["Sr No", "Candidate Name", "Date", "Day", "Check In Time", "Check Out Time", "Total Spent Time"])
+    ws.append(["Sr No", "Member Name", "Date", "Day", "Check In Time", "Check Out Time", "Total Spent Time"])
 
     sr = 1
     for date_val, times in daily_data.items():
         day_str = date_val.strftime("%A")
         date_str = date_val.strftime("%d-%m-%Y")
-        
         in_time_str = times["in"].strftime("%I:%M:%S %p") if times["in"] else "N/A"
         out_time_str = times["out"].strftime("%I:%M:%S %p") if times["out"] else "N/A"
 
@@ -509,7 +471,6 @@ def download_user():
         if times["in"] and times["out"]:
             t_in = datetime.combine(date_val, times["in"])
             t_out = datetime.combine(date_val, times["out"])
-            
             if t_out > t_in:
                 diff = t_out - t_in
                 hours, remainder = divmod(diff.seconds, 3600)
@@ -526,58 +487,36 @@ def download_user():
     DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "downloads")
     os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
     FILE_PATH = os.path.join(DOWNLOAD_FOLDER, f"{member}_Attendance_Report.xlsx")
-
     wb.save(FILE_PATH)
     wb.close()
-
     return send_file(FILE_PATH, as_attachment=True, download_name=f"{member}_Attendance_Report.xlsx")
 
-# ---------------------------------
-# DASHBOARD
-# ---------------------------------
 @app.route("/dashboard")
 def dashboard():
     conn = get_connection()
     cur = conn.cursor()
-
     cur.execute("SELECT COUNT(*) AS total FROM attendance")
     total = cur.fetchone()["total"]
-
     cur.execute("SELECT COUNT(*) AS total FROM attendance WHERE action='Check In'")
     checkin = cur.fetchone()["total"]
-
     cur.execute("SELECT COUNT(*) AS total FROM attendance WHERE action='Check Out'")
     checkout = cur.fetchone()["total"]
-
     cur.execute("SELECT COUNT(*) AS total FROM attendance WHERE attendance_date=CURRENT_DATE")
     today = cur.fetchone()["total"]
-
     cur.close()
     conn.close()
 
     return f"""
-    <html>
-    <head>
-    <title>SGMEA Dashboard</title>
-    {COMMON_STYLE}
-    </head>
-    <body>
-    <div class="card" style="max-width:500px;">
+    <html><head><title>SGMEA Dashboard</title>{COMMON_STYLE}</head>
+    <body><div class="card" style="max-width:500px;">
     <h2>📊 SGMEA Analytics Dashboard</h2>
     <div style="background:#0f172a; padding:15px; border-radius:12px; margin-bottom:10px;">📋 Total Records : <b>{total}</b></div>
     <div style="background:#0f172a; padding:15px; border-radius:12px; margin-bottom:10px; color:#4ade80;">✅ Total Check In : <b>{checkin}</b></div>
     <div style="background:#0f172a; padding:15px; border-radius:12px; margin-bottom:10px; color:#f87171;">❌ Total Check Out : <b>{checkout}</b></div>
     <div style="background:#0f172a; padding:15px; border-radius:12px; margin-bottom:10px; color:#38bdf8;">📅 Today's Attendance : <b>{today}</b></div>
-    <br>
-    <a href="/" class="download" style="background:#475569;">⬅ Back to Home</a>
-    </div>
-    </body>
-    </html>
+    <br><a href="/" class="download" style="background:#475569; box-shadow:none;">⬅ Back to Home</a></div></body></html>
     """
 
-# ---------------------------------
-# HEALTH CHECK & RUN
-# ---------------------------------
 @app.route("/health")
 def health():
     return {"status": "online", "database": "connected"}
