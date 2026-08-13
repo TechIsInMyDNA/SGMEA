@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file, redirect, url_for
+from flask import Flask, request, send_file, redirect, url_for, session
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from openpyxl import Workbook
@@ -8,8 +8,8 @@ import os
 
 app = Flask(__name__)
 
-# Secret key for security signing
-app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", "SGMEA_SUPER_SECRET_KEY_1441")
+# Secret Key for Session Encryption & Security
+app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", "SGMEA_SUPER_SECURE_SGM_KEY_1441")
 
 # ---------------------------------
 # SECURITY HEADERS
@@ -63,7 +63,7 @@ def init_db():
     );
     """)
 
-    # Seed Master Owner and Staff
+    # Seed Initial Users
     cur.execute("SELECT COUNT(*) as count FROM users;")
     if cur.fetchone()["count"] == 0:
         cur.execute("INSERT INTO users (name, pin, role) VALUES (%s, %s, %s)", ("Shubham Agrawal SGM", "1441", "Owner"))
@@ -95,7 +95,6 @@ def save_data(name, action):
         attendance_date = now.date()
         attendance_time = now.time().replace(microsecond=0)
 
-        # Anti-spam / Duplicate Check (1 minute interval limit)
         cur.execute("""
         SELECT id FROM attendance
         WHERE name=%s AND action=%s AND created_at >= NOW() - INTERVAL '1 minute'
@@ -116,7 +115,7 @@ def save_data(name, action):
         cur.close()
         conn.close()
         return True
-    except Exception as e:
+    except Exception:
         conn.rollback()
         cur.close()
         conn.close()
@@ -146,7 +145,7 @@ button { width: 100%; padding: 14px; margin-top: 14px; border: none; border-radi
 """
 
 # ---------------------------------
-# ROUTES
+# HOME PORTAL
 # ---------------------------------
 @app.route("/")
 def home():
@@ -174,61 +173,106 @@ def home():
 </html>
 """
 
+# ---------------------------------
+# SECURED OWNER ADMIN PANEL
+# ---------------------------------
 @app.route("/owner", methods=["GET", "POST"])
 def owner():
+    message = ""
+    authenticated = session.get("owner_auth", False)
+
     if request.method == "POST":
-        owner_pin = request.form.get("owner_pin", "").strip()
-        new_name = request.form.get("new_name", "").strip()
-        new_pin = request.form.get("new_pin", "").strip()
-        role = request.form.get("role", "Candidate").strip()
+        action_type = request.form.get("action_type")
 
-        # MASTER OWNER PIN SECURITY
-        if owner_pin != "1441":
-            return """<script>alert('Unauthorized Access! Incorrect Master PIN.'); window.location.href='/owner';</script>"""
+        # Step 1: Login Check with Master PIN
+        if action_type == "login":
+            entered_pin = request.form.get("owner_pin", "").strip()
+            if entered_pin == "1441":
+                session["owner_auth"] = True
+                authenticated = True
+            else:
+                message = "<script>alert('Incorrect Master PIN! Access Denied.');</script>"
 
-        if new_name and new_pin:
-            try:
-                conn = get_connection()
-                cur = conn.cursor()
-                cur.execute("INSERT INTO users (name, pin, role) VALUES (%s, %s, %s)", (new_name, new_pin, role))
-                conn.commit()
-                cur.close()
-                conn.close()
-                return f"""<script>alert('Member "{new_name}" Added Successfully!'); window.location.href='/owner';</script>"""
-            except Exception:
-                return """<script>alert('Error: User already exists!'); window.location.href='/owner';</script>"""
+        # Step 2: Add New Member (Only when Authenticated)
+        elif action_type == "add_member" and authenticated:
+            new_name = request.form.get("new_name", "").strip()
+            new_pin = request.form.get("new_pin", "").strip()
+            role = request.form.get("role", "Candidate").strip()
 
-    users = get_users_map()
-    user_rows = "".join([f"<tr><td style='padding:8px;'>{u}</td></tr>" for u in users.keys()])
+            if new_name and new_pin:
+                try:
+                    conn = get_connection()
+                    cur = conn.cursor()
+                    cur.execute("INSERT INTO users (name, pin, role) VALUES (%s, %s, %s)", (new_name, new_pin, role))
+                    conn.commit()
+                    cur.close()
+                    conn.close()
+                    message = f"<script>alert('Member \"{new_name}\" Added Successfully!');</script>"
+                except Exception:
+                    message = "<script>alert('Error: User already exists!');</script>"
+
+        # Logout
+        elif action_type == "logout":
+            session.pop("owner_auth", None)
+            return redirect(url_for("owner"))
+
+    # Render Screen Based on Auth Status
+    if authenticated:
+        users = get_users_map()
+        user_rows = "".join([f"<tr><td style='padding:8px; border-bottom:1px solid #1e293b;'>{u}</td></tr>" for u in users.keys()])
+        
+        content = f"""
+        {message}
+        <p style="text-align:center; color:#34d399; font-weight:bold; margin-bottom:15px;">🔓 Owner Access Granted (Shubham Agrawal SGM)</p>
+        <form method="POST">
+        <input type="hidden" name="action_type" value="add_member">
+        <input type="text" name="new_name" placeholder="Staff / Candidate Name" required autocomplete="off">
+        <input type="password" name="new_pin" placeholder="Assign Secret PIN" required autocomplete="off">
+        <select name="role">
+            <option value="Employee">Staff Employee</option>
+            <option value="Candidate">D.Pharm Candidate</option>
+        </select>
+        <button class="in" type="submit">➕ Register New Member</button>
+        </form>
+
+        <h4 style="margin-top:20px; color:#38bdf8; text-align:center;">Registered Members List</h4>
+        <div style="max-height:140px; overflow-y:auto; margin-top:10px; background:#0f172a; padding:10px; border-radius:10px; border:1px solid #334155;">
+        <table style="width:100%; color:white; font-size:14px;">{user_rows}</table>
+        </div>
+
+        <form method="POST" style="margin-top:10px;">
+        <input type="hidden" name="action_type" value="logout">
+        <button type="submit" style="background:#dc2626; color:white; padding:10px;">🔒 Lock Owner Panel</button>
+        </form>
+        """
+    else:
+        content = f"""
+        {message}
+        <p style="text-align:center; color:#94a3b8; font-size:13px; margin-bottom:15px;">Authentication Required</p>
+        <form method="POST">
+        <input type="hidden" name="action_type" value="login">
+        <input type="password" name="owner_pin" placeholder="Enter Owner Master PIN" required autocomplete="off">
+        <button class="in" type="submit">🔓 Unlock Admin Access</button>
+        </form>
+        """
 
     return f"""
 <!DOCTYPE html>
 <html>
-<head><meta charset="UTF-8"><title>Owner Control Panel</title>{COMMON_STYLE}</head>
+<head><meta charset="UTF-8"><title>Secured Owner Panel</title>{COMMON_STYLE}</head>
 <body>
 <div class="card">
-<h3>👑 Owner Admin Panel</h3>
-<p style="text-align:center; color:#94a3b8; font-size:13px; margin-bottom:15px;">Welcome Shubham Agrawal SGM</p>
-<form method="POST">
-<input type="password" name="owner_pin" placeholder="Enter Owner Master PIN (1441)" required>
-<input type="text" name="new_name" placeholder="Staff / Candidate Name" required>
-<input type="text" name="new_pin" placeholder="Assign Secret PIN" required>
-<select name="role">
-    <option value="Employee">Staff Employee</option>
-    <option value="Candidate">D.Pharm Candidate</option>
-</select>
-<button class="in" type="submit">➕ Register New Member</button>
-</form>
-<h4 style="margin-top:20px; color:#38bdf8; text-align:center;">Registered Members</h4>
-<div style="max-height:140px; overflow-y:auto; margin-top:10px; background:#0f172a; padding:10px; border-radius:10px;">
-<table style="width:100%; color:white; font-size:14px;">{user_rows}</table>
-</div>
-<a href="/" class="download" style="background:#475569;">⬅ Back to Portal</a>
+<h3>👑 Owner Admin Control</h3>
+{content}
+<a href="/" class="download" style="background:#475569;">⬅ Back to Home Portal</a>
 </div>
 </body>
 </html>
 """
 
+# ---------------------------------
+# MARK ATTENDANCE
+# ---------------------------------
 @app.route("/mark", methods=["POST"])
 def mark():
     name = request.form.get("name", "").strip()
@@ -246,6 +290,9 @@ def mark():
     else:
         return f"""<script>alert("Duplicate Entry Blocked! Please wait 1 minute."); window.location.href="/";</script>"""
 
+# ---------------------------------
+# REPORTS & DASHBOARD
+# ---------------------------------
 @app.route("/download")
 def download():
     conn = get_connection()
@@ -269,6 +316,69 @@ def download():
     wb.save(FILE_PATH)
     wb.close()
     return send_file(FILE_PATH, as_attachment=True, download_name="SGMEA_Attendance.xlsx")
+
+@app.route("/download_user", methods=["GET", "POST"])
+def download_user():
+    users = get_users_map()
+    if request.method == "GET":
+        options = "".join([f'<option value="{u}">{u}</option>' for u in users.keys()])
+        return f"""
+        <html><head><title>Export Individual Attendance</title>{COMMON_STYLE}</head>
+        <body><div class="card"><h3>Export Individual Report</h3>
+        <form method="POST"><select name="member">{options}</select>
+        <button class="in" type="submit">📥 Download Excel Report</button></form>
+        <a href="/" class="download" style="background:#475569;">⬅ Back</a></div></body></html>
+        """
+
+    member = request.form.get("member")
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT action, attendance_date, attendance_time FROM attendance WHERE name=%s ORDER BY attendance_date ASC, attendance_time ASC", (member,))
+    records = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    daily_data = {}
+    for r in records:
+        d = r["attendance_date"]
+        if d not in daily_data:
+            daily_data[d] = {"in": None, "out": None}
+        if r["action"] == "Check In" and not daily_data[d]["in"]:
+            daily_data[d]["in"] = r["attendance_time"]
+        elif r["action"] == "Check Out":
+            daily_data[d]["out"] = r["attendance_time"]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"{member}_Report"
+    ws.append(["Sr No", "Member Name", "Date", "Day", "Check In Time", "Check Out Time", "Total Spent Time"])
+
+    sr = 1
+    for date_val, times in daily_data.items():
+        day_str = date_val.strftime("%A")
+        date_str = date_val.strftime("%d-%m-%Y")
+        in_time_str = times["in"].strftime("%I:%M:%S %p") if times["in"] else "N/A"
+        out_time_str = times["out"].strftime("%I:%M:%S %p") if times["out"] else "N/A"
+
+        spent_str = "N/A"
+        if times["in"] and times["out"]:
+            t_in = datetime.combine(date_val, times["in"])
+            t_out = datetime.combine(date_val, times["out"])
+            if t_out > t_in:
+                diff = t_out - t_in
+                hours, remainder = divmod(diff.seconds, 3600)
+                minutes, _ = divmod(remainder, 60)
+                spent_str = f"{hours}h {minutes}m"
+
+        ws.append([sr, member, date_str, day_str, in_time_str, out_time_str, spent_str])
+        sr += 1
+
+    DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "downloads")
+    os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+    FILE_PATH = os.path.join(DOWNLOAD_FOLDER, f"{member}_Attendance_Report.xlsx")
+    wb.save(FILE_PATH)
+    wb.close()
+    return send_file(FILE_PATH, as_attachment=True, download_name=f"{member}_Attendance_Report.xlsx")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
