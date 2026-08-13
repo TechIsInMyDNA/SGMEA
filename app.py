@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file
+from flask import Flask, request, send_file, redirect, url_for
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from openpyxl import Workbook
@@ -9,29 +9,16 @@ import os
 app = Flask(__name__)
 
 # ---------------------------------
-# USERS (SGM 2.0 CANDIDATES & PINS)
-# ---------------------------------
-# Yahan aap naye D.Pharm candidates ke naam aur unka PIN set kar sakte hain
-USERS = {
-    "Gaurav": "1234",
-    "Arshi": "5678",
-      # SGM 2.0 Candidate Example
-      # SGM 2.0 Candidate Example
-}
-
-# ---------------------------------
 # DATABASE URL
 # ---------------------------------
-
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 if not DATABASE_URL:
-    raise Exception("DATABASE_URL")
+    raise Exception("DATABASE_URL environment variable missing")
 
 # ---------------------------------
 # CONNECT DATABASE
 # ---------------------------------
-
 def get_connection():
     return psycopg2.connect(
         DATABASE_URL,
@@ -40,13 +27,13 @@ def get_connection():
     )
 
 # ---------------------------------
-# CREATE TABLE
+# CREATE TABLES (ATTENDANCE & USERS)
 # ---------------------------------
-
-def create_table():
+def init_db():
     conn = get_connection()
     cur = conn.cursor()
 
+    # Attendance Table
     cur.execute("""
     CREATE TABLE IF NOT EXISTS attendance(
         id SERIAL PRIMARY KEY,
@@ -55,25 +42,49 @@ def create_table():
         attendance_date DATE NOT NULL,
         attendance_time TIME NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
+    );
     """)
+
+    # Dynamic Users Table (Owner Controlled)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users(
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) UNIQUE NOT NULL,
+        pin VARCHAR(20) NOT NULL,
+        role VARCHAR(20) DEFAULT 'Candidate'
+    );
+    """)
+
+    # Seed Default Candidates if table is empty
+    cur.execute("SELECT COUNT(*) as count FROM users;")
+    if cur.fetchone()["count"] == 0:
+        cur.execute("INSERT INTO users (name, pin, role) VALUES (%s, %s, %s)", ("Gaurav", "1234", "Owner"))
+        cur.execute("INSERT INTO users (name, pin, role) VALUES (%s, %s, %s)", ("Arshi", "5678", "Candidate"))
 
     conn.commit()
     cur.close()
     conn.close()
 
-create_table()
+init_db()
+
+# Fetch active users from DB
+def get_users_map():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT name, pin FROM users ORDER BY name ASC")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return {r["name"]: r["pin"] for r in rows}
 
 # ---------------------------------
 # INDIA TIME
 # ---------------------------------
-
 india = pytz.timezone("Asia/Kolkata")
 
 # ---------------------------------
 # SAVE ATTENDANCE
 # ---------------------------------
-
 def save_data(name, action):
     conn = get_connection()
     cur = conn.cursor()
@@ -83,7 +94,7 @@ def save_data(name, action):
         attendance_date = now.date()
         attendance_time = now.time().replace(microsecond=0)
 
-        # DUPLICATE CHECK
+        # DUPLICATE CHECK (within 1 min)
         cur.execute("""
         SELECT id
         FROM attendance
@@ -92,8 +103,7 @@ def save_data(name, action):
         AND action=%s
         AND created_at >= NOW() - INTERVAL '1 minute'
         LIMIT 1
-        """,
-        (name, action))
+        """, (name, action))
 
         duplicate = cur.fetchone()
 
@@ -104,21 +114,9 @@ def save_data(name, action):
 
         # INSERT RECORD
         cur.execute("""
-        INSERT INTO attendance
-        (
-            name,
-            action,
-            attendance_date,
-            attendance_time
-        )
+        INSERT INTO attendance (name, action, attendance_date, attendance_time)
         VALUES (%s, %s, %s, %s)
-        """,
-        (
-            name,
-            action,
-            attendance_date,
-            attendance_time
-        ))
+        """, (name, action, attendance_date, attendance_time))
 
         conn.commit()
         cur.close()
@@ -135,22 +133,132 @@ def save_data(name, action):
 # ---------------------------------
 # VERIFY PIN
 # ---------------------------------
-
 def verify_pin(name, pin):
-    if name not in USERS:
+    users = get_users_map()
+    if name not in users:
         return False
-    if USERS[name] != pin:
+    if users[name] != pin:
         return False
     return True
 
 # ---------------------------------
+# COMMON MODERN CSS DESIGN
+# ---------------------------------
+COMMON_STYLE = """
+<style>
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+body {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    color: #f8fafc;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+.card {
+    background: rgba(30, 41, 59, 0.7);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    width: 100%;
+    max-width: 420px;
+    padding: 30px;
+    border-radius: 20px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+}
+h2, h3 {
+    text-align: center;
+    margin-bottom: 20px;
+    color: #38bdf8;
+    letter-spacing: 0.5px;
+}
+select, input {
+    width: 100%;
+    padding: 14px;
+    margin-top: 12px;
+    border-radius: 12px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #f8fafc;
+    font-size: 15px;
+    outline: none;
+    transition: 0.3s;
+}
+select:focus, input:focus {
+    border-color: #38bdf8;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+}
+button {
+    width: 100%;
+    padding: 14px;
+    margin-top: 14px;
+    border: none;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+button:hover {
+    transform: translateY(-2px);
+}
+.in {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: white;
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+}
+.out {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    color: white;
+    box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
+}
+.download {
+    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+    color: white;
+    text-decoration: none;
+    display: block;
+    text-align: center;
+    padding: 14px;
+    margin-top: 12px;
+    border-radius: 12px;
+    font-weight: bold;
+    font-size: 15px;
+    box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+}
+.owner-btn {
+    background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+    color: white;
+    text-decoration: none;
+    display: block;
+    text-align: center;
+    padding: 12px;
+    margin-top: 12px;
+    border-radius: 12px;
+    font-weight: bold;
+    box-shadow: 0 4px 15px rgba(139, 92, 246, 0.3);
+}
+.footer {
+    margin-top: 22px;
+    text-align: center;
+    font-size: 12px;
+    color: #94a3b8;
+}
+</style>
+"""
+
+# ---------------------------------
 # HOME PAGE
 # ---------------------------------
-
 @app.route("/")
 def home():
+    users = get_users_map()
     options = ""
-    for user in USERS.keys():
+    for user in users.keys():
         options += f'<option value="{user}">{user}</option>'
 
     return f"""
@@ -159,95 +267,97 @@ def home():
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SGMEA Attendance</title>
-<style>
-*{{
-margin:0;
-padding:0;
-box-sizing:border-box;
-font-family:Arial,sans-serif;
-}}
-body{{
-background:#f2f5f9;
-display:flex;
-justify-content:center;
-align-items:center;
-height:100vh;
-}}
-.card{{
-background:white;
-width:360px;
-padding:25px;
-border-radius:15px;
-box-shadow:0 10px 25px rgba(0,0,0,.15);
-}}
-h2{{
-text-align:center;
-margin-bottom:20px;
-color:#0b5ed7;
-}}
-select,
-input{{
-width:100%;
-padding:12px;
-margin-top:10px;
-border-radius:10px;
-border:1px solid #ccc;
-font-size:16px;
-}}
-button{{
-width:100%;
-padding:13px;
-margin-top:12px;
-border:none;
-border-radius:10px;
-font-size:16px;
-cursor:pointer;
-}}
-.in{{
-background:#198754;
-color:white;
-}}
-.out{{
-background:#dc3545;
-color:white;
-}}
-.download{{
-background:#0d6efd;
-color:white;
-text-decoration:none;
-display:block;
-text-align:center;
-padding:13px;
-margin-top:12px;
-border-radius:10px;
-}}
-.footer{{
-margin-top:18px;
-text-align:center;
-font-size:13px;
-color:gray;
-}}
-</style>
+<title>SGMEA Attendance Portal</title>
+{COMMON_STYLE}
 </head>
 <body>
 <div class="card">
-<h2>SGMEA Attendance</h2>
+<h2>🛡️ SGMEA Attendance</h2>
 <form action="/mark" method="POST">
 <select name="name" required>
+<option value="" disabled selected>Select Candidate / Employee</option>
 {options}
 </select>
-<input type="password" name="pin" placeholder="Enter PIN" required>
+<input type="password" name="pin" placeholder="Enter Confidential PIN" required>
 <button class="in" type="submit" name="action" value="Check In">✅ Check In</button>
 <button class="out" type="submit" name="action" value="Check Out">❌ Check Out</button>
 </form>
 
-<a class="download" href="/download">📥 Download All Attendance</a>
-<a class="download" style="background:#6c757d;" href="/download_user">📊 Individual Candidate Excel</a>
+<a class="download" href="/download">📥 Download Complete Excel</a>
+<a class="download" style="background:#475569; box-shadow:none;" href="/download_user">📊 Individual Member Report</a>
+<a class="owner-btn" href="/owner">👑 Owner Control Panel (Add Member)</a>
 
 <div class="footer">
-Powered by SGMEA
+Powered by SGMEA Cyber Platform
 </div>
+</div>
+</body>
+</html>
+"""
+
+# ---------------------------------
+# OWNER / ADMIN PANEL (NEW FEATURE)
+# ---------------------------------
+@app.route("/owner", methods=["GET", "POST"])
+def owner():
+    if request.method == "POST":
+        owner_pin = request.form.get("owner_pin", "").strip()
+        new_name = request.form.get("new_name", "").strip()
+        new_pin = request.form.get("new_pin", "").strip()
+        role = request.form.get("role", "Candidate").strip()
+
+        # Simple Master Owner Verification
+        if owner_pin != "1234":  # Default Owner Master PIN
+            return """<script>alert('Unauthorized Owner PIN!'); window.location.href='/owner';</script>"""
+
+        if new_name and new_pin:
+            try:
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("INSERT INTO users (name, pin, role) VALUES (%s, %s, %s)", (new_name, new_pin, role))
+                conn.commit()
+                cur.close()
+                conn.close()
+                return f"""<script>alert('Member {new_name} Registered Successfully!'); window.location.href='/owner';</script>"""
+            except Exception as e:
+                return f"""<script>alert('Error: Member already exists or invalid data!'); window.location.href='/owner';</script>"""
+
+    users = get_users_map()
+    user_rows = ""
+    for u, p in users.items():
+        user_rows += f"<tr><td style='padding:8px;'>{u}</td><td style='padding:8px;'>****</td></tr>"
+
+    return f"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>SGMEA Owner Control</title>
+{COMMON_STYLE}
+</head>
+<body>
+<div class="card">
+<h3>👑 Owner Admin Panel</h3>
+<form method="POST">
+<input type="password" name="owner_pin" placeholder="Enter Owner Master PIN" required>
+<input type="text" name="new_name" placeholder="Candidate / Employee Name" required>
+<input type="text" name="new_pin" placeholder="Assign PIN (e.g. 9988)" required>
+<select name="role">
+    <option value="Candidate">D.Pharm Candidate</option>
+    <option value="Employee">Staff Employee</option>
+</select>
+<button class="in" type="submit">➕ Register New User</button>
+</form>
+
+<h4 style="margin-top:20px; color:#38bdf8; text-align:center;">Active Members List</h4>
+<div style="max-height:150px; overflow-y:auto; margin-top:10px; background:#0f172a; padding:10px; border-radius:10px;">
+<table style="width:100%; color:white; font-size:14px; text-align:left;">
+<tr><th>Name</th><th>Status</th></tr>
+{user_rows}
+</table>
+</div>
+
+<a href="/" class="download" style="background:#475569;">⬅ Back to Home</a>
 </div>
 </body>
 </html>
@@ -256,7 +366,6 @@ Powered by SGMEA
 # ---------------------------------
 # MARK ATTENDANCE
 # ---------------------------------
-
 @app.route("/mark", methods=["POST"])
 def mark():
     name = request.form.get("name", "").strip()
@@ -264,42 +373,21 @@ def mark():
     action = request.form.get("action", "").strip()
 
     if name == "" or pin == "" or action == "":
-        return """
-        <script>
-        alert("Please fill all fields.");
-        window.location.href="/";
-        </script>
-        """
+        return """<script>alert("Please fill all fields."); window.location.href="/";</script>"""
 
     if not verify_pin(name, pin):
-        return """
-        <script>
-        alert("Wrong PIN !");
-        window.location.href="/";
-        </script>
-        """
+        return """<script>alert("Wrong PIN !"); window.location.href="/";</script>"""
 
     saved = save_data(name, action)
 
     if saved:
-        return f"""
-        <script>
-        alert("{name}\\n\\n{action} Successful.");
-        window.location.href="/";
-        </script>
-        """
+        return f"""<script>alert("{name}\\n\\n{action} Successful."); window.location.href="/";</script>"""
     else:
-        return f"""
-        <script>
-        alert("{name}\\n\\nDuplicate attendance detected.\\nPlease wait one minute.");
-        window.location.href="/";
-        </script>
-        """
+        return f"""<script>alert("{name}\\n\\nDuplicate attendance detected.\\nPlease wait one minute."); window.location.href="/";</script>"""
 
 # ---------------------------------
 # ALL ATTENDANCE DOWNLOAD
 # ---------------------------------
-
 @app.route("/download")
 def download():
     conn = get_connection()
@@ -345,28 +433,21 @@ def download():
     return send_file(FILE_PATH, as_attachment=True, download_name="SGMEA_Attendance.xlsx")
 
 # ---------------------------------
-# NEW FEATURE: INDIVIDUAL MEMBER EXCEL EXPORT (Date, Day, Check In, Check Out, Total Time)
+# INDIVIDUAL MEMBER EXCEL EXPORT
 # ---------------------------------
-
 @app.route("/download_user", methods=["GET", "POST"])
 def download_user():
+    users = get_users_map()
     if request.method == "GET":
         options = ""
-        for user in USERS.keys():
+        for user in users.keys():
             options += f'<option value="{user}">{user}</option>'
 
         return f"""
         <html>
         <head>
         <title>Export Individual Attendance</title>
-        <style>
-        body{{font-family:Arial;background:#f2f5f9;display:flex;justify-content:center;align-items:center;height:100vh;}}
-        .card{{background:white;width:350px;padding:25px;border-radius:15px;box-shadow:0 10px 25px rgba(0,0,0,.15);}}
-        h3{{text-align:center;color:#0b5ed7;margin-bottom:15px;}}
-        select,button{{width:100%;padding:12px;margin-top:10px;border-radius:10px;border:1px solid #ccc;font-size:16px;}}
-        button{{background:#198754;color:white;border:none;cursor:pointer;}}
-        a{{display:block;text-align:center;margin-top:15px;color:gray;text-decoration:none;}}
-        </style>
+        {COMMON_STYLE}
         </head>
         <body>
         <div class="card">
@@ -375,9 +456,9 @@ def download_user():
         <select name="member">
         {options}
         </select>
-        <button type="submit">📥 Download Excel Report</button>
+        <button class="in" type="submit">📥 Download Excel Report</button>
         </form>
-        <a href="/">⬅ Back</a>
+        <a href="/" class="download" style="background:#475569;">⬅ Back</a>
         </div>
         </body>
         </html>
@@ -399,7 +480,6 @@ def download_user():
     cur.close()
     conn.close()
 
-    # Group records by Date to pair Check In and Check Out
     daily_data = {}
     for r in records:
         d = r["attendance_date"]
@@ -425,7 +505,6 @@ def download_user():
         in_time_str = times["in"].strftime("%I:%M:%S %p") if times["in"] else "N/A"
         out_time_str = times["out"].strftime("%I:%M:%S %p") if times["out"] else "N/A"
 
-        # Calculate Total Spent Time
         spent_str = "N/A"
         if times["in"] and times["out"]:
             t_in = datetime.combine(date_val, times["in"])
@@ -456,7 +535,6 @@ def download_user():
 # ---------------------------------
 # DASHBOARD
 # ---------------------------------
-
 @app.route("/dashboard")
 def dashboard():
     conn = get_connection()
@@ -481,166 +559,28 @@ def dashboard():
     <html>
     <head>
     <title>SGMEA Dashboard</title>
-    <style>
-    body{{font-family:Arial;background:#f3f5f7;padding:30px;}}
-    .box{{background:white;padding:20px;margin:15px;border-radius:15px;box-shadow:0 0 10px rgba(0,0,0,.15);font-size:22px;}}
-    a{{text-decoration:none;font-size:18px;}}
-    </style>
+    {COMMON_STYLE}
     </head>
     <body>
-    <h2>SGMEA Attendance Dashboard</h2>
-    <div class="box">📋 Total Records : <b>{total}</b></div>
-    <div class="box">✅ Total Check In : <b>{checkin}</b></div>
-    <div class="box">❌ Total Check Out : <b>{checkout}</b></div>
-    <div class="box">📅 Today's Attendance : <b>{today}</b></div>
+    <div class="card" style="max-width:500px;">
+    <h2>📊 SGMEA Analytics Dashboard</h2>
+    <div style="background:#0f172a; padding:15px; border-radius:12px; margin-bottom:10px;">📋 Total Records : <b>{total}</b></div>
+    <div style="background:#0f172a; padding:15px; border-radius:12px; margin-bottom:10px; color:#4ade80;">✅ Total Check In : <b>{checkin}</b></div>
+    <div style="background:#0f172a; padding:15px; border-radius:12px; margin-bottom:10px; color:#f87171;">❌ Total Check Out : <b>{checkout}</b></div>
+    <div style="background:#0f172a; padding:15px; border-radius:12px; margin-bottom:10px; color:#38bdf8;">📅 Today's Attendance : <b>{today}</b></div>
     <br>
-    <a href="/">⬅ Back to Attendance</a>
+    <a href="/" class="download" style="background:#475569;">⬅ Back to Home</a>
+    </div>
     </body>
     </html>
     """
 
 # ---------------------------------
-# HEALTH CHECK
+# HEALTH CHECK & RUN
 # ---------------------------------
-
 @app.route("/health")
 def health():
     return {"status": "online", "database": "connected"}
-
-# ---------------------------------
-# TOTAL RECORD API
-# ---------------------------------
-
-@app.route("/count")
-def count():
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) AS total FROM attendance")
-    total = cur.fetchone()["total"]
-    cur.close()
-    conn.close()
-    return {"records": total}
-
-# ---------------------------------
-# SEARCH MEMBER ATTENDANCE
-# ---------------------------------
-
-@app.route("/search", methods=["GET", "POST"])
-def search():
-    if request.method == "GET":
-        options = ""
-        for user in USERS.keys():
-            options += f'<option value="{user}">{user}</option>'
-
-        return f"""
-        <html>
-        <head>
-        <title>Search Attendance</title>
-        <style>
-        body{{font-family:Arial;background:#f2f2f2;}}
-        .box{{width:350px;background:white;margin:80px auto;padding:20px;border-radius:15px;box-shadow:0 0 10px rgba(0,0,0,.2);}}
-        select,button{{width:100%;padding:12px;margin-top:10px;border-radius:10px;}}
-        </style>
-        </head>
-        <body>
-        <div class="box">
-        <h2 align="center">Search Attendance</h2>
-        <form method="POST">
-        <select name="member">{options}</select>
-        <button type="submit">Search</button>
-        </form>
-        </div>
-        </body>
-        </html>
-        """
-
-    member = request.form["member"]
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-    SELECT action, attendance_date, attendance_time
-    FROM attendance
-    WHERE name=%s
-    ORDER BY created_at DESC
-    """, (member,))
-
-    records = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    rows = ""
-    sr = 1
-    for r in records:
-        rows += f"""
-        <tr>
-        <td>{sr}</td>
-        <td>{r['action']}</td>
-        <td>{r['attendance_date']}</td>
-        <td>{r['attendance_time']}</td>
-        </tr>
-        """
-        sr += 1
-
-    return f"""
-    <html>
-    <head>
-    <title>{member}</title>
-    <style>
-    body{{font-family:Arial;background:#f5f5f5;padding:20px;}}
-    table{{border-collapse:collapse;width:100%;background:white;}}
-    th,td{{border:1px solid #ddd;padding:10px;text-align:center;}}
-    th{{background:#0d6efd;color:white;}}
-    </style>
-    </head>
-    <body>
-    <h2>{member} Attendance History</h2>
-    <table>
-    <tr><th>Sr</th><th>Action</th><th>Date</th><th>Time</th></tr>
-    {rows}
-    </table>
-    <br>
-    <a href="/">⬅ Back</a>
-    </body>
-    </html>
-    """
-
-# ---------------------------------
-# ERROR HANDLERS
-# ---------------------------------
-
-@app.errorhandler(404)
-def page_not_found(e):
-    return """
-    <html>
-    <head><title>404</title>
-    <style>body{font-family:Arial;background:#f5f5f5;text-align:center;padding-top:80px;}a{text-decoration:none;font-size:18px;}</style>
-    </head>
-    <body>
-    <h1>404</h1>
-    <h3>Page Not Found</h3>
-    <br>
-    <a href="/">🏠 Go Home</a>
-    </body>
-    </html>
-    """, 404
-
-@app.errorhandler(500)
-def internal_error(e):
-    return """
-    <script>
-    alert("Internal Server Error");
-    window.location="/";
-    </script>
-    """, 500
-
-@app.teardown_appcontext
-def close_connection(exception):
-    pass
-
-# ---------------------------------
-# MAIN
-# ---------------------------------
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
