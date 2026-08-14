@@ -297,25 +297,53 @@ def mark():
 def download():
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("SELECT name, action, attendance_date, attendance_time FROM attendance ORDER BY created_at DESC")
+    cur.execute("SELECT name, action, attendance_date, attendance_time FROM attendance ORDER BY attendance_date DESC, name ASC, attendance_time ASC")
     records = cur.fetchall()
     cur.close()
     conn.close()
 
+    # Group records by (member_name, date)
+    daily_data = {}
+    for r in records:
+        key = (r["name"], r["attendance_date"])
+        if key not in daily_data:
+            daily_data[key] = {"in": None, "out": None}
+        if r["action"] == "Check In" and not daily_data[key]["in"]:
+            daily_data[key]["in"] = r["attendance_time"]
+        elif r["action"] == "Check Out":
+            daily_data[key]["out"] = r["attendance_time"]
+
     wb = Workbook()
     ws = wb.active
-    ws.title = "Attendance"
-    ws.append(["Sr No", "Member Name", "Attendance", "Date", "Time"])
+    ws.title = "Complete_Attendance"
+    ws.append(["Sr No", "Member Name", "Date", "Day", "Check In Time", "Check Out Time", "Total Spent Time"])
 
-    for sr, row in enumerate(records, 1):
-        ws.append([sr, row["name"], row["action"], row["attendance_date"].strftime("%d-%m-%Y"), row["attendance_time"].strftime("%I:%M:%S %p")])
+    sr = 1
+    for (member, date_val), times in daily_data.items():
+        day_str = date_val.strftime("%A")
+        date_str = date_val.strftime("%d-%m-%Y")
+        in_time_str = times["in"].strftime("%I:%M:%S %p") if times["in"] else "N/A"
+        out_time_str = times["out"].strftime("%I:%M:%S %p") if times["out"] else "N/A"
+
+        spent_str = "N/A"
+        if times["in"] and times["out"]:
+            t_in = datetime.combine(date_val, times["in"])
+            t_out = datetime.combine(date_val, times["out"])
+            if t_out > t_in:
+                diff = t_out - t_in
+                hours, remainder = divmod(diff.seconds, 3600)
+                minutes, _ = divmod(remainder, 60)
+                spent_str = f"{hours}h {minutes}m"
+
+        ws.append([sr, member, date_str, day_str, in_time_str, out_time_str, spent_str])
+        sr += 1
 
     DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "downloads")
     os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
-    FILE_PATH = os.path.join(DOWNLOAD_FOLDER, "SGMEA_Attendance.xlsx")
+    FILE_PATH = os.path.join(DOWNLOAD_FOLDER, "SGMEA_Complete_Attendance.xlsx")
     wb.save(FILE_PATH)
     wb.close()
-    return send_file(FILE_PATH, as_attachment=True, download_name="SGMEA_Attendance.xlsx")
+    return send_file(FILE_PATH, as_attachment=True, download_name="SGMEA_Complete_Attendance.xlsx")
 
 @app.route("/download_user", methods=["GET", "POST"])
 def download_user():
