@@ -2,7 +2,7 @@ from flask import Flask, request, send_file, redirect, url_for, session, jsonify
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from openpyxl import Workbook
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 import os
 import math
@@ -152,14 +152,13 @@ def verify_pin(name, pin):
     return users.get(name) == pin
 
 # ---------------------------------
-# API: DYNAMIC MEMBER LIST FOR STANDALONE APP
+# API ROUTE FOR STANDALONE APP
 # ---------------------------------
 @app.route("/api/users", methods=["GET"])
 def api_users():
     try:
         conn = get_connection()
         cur = conn.cursor()
-        # Owner ko chhodkar sabhi staff/candidates list honge
         cur.execute("SELECT name FROM users WHERE name != 'Shubham Agrawal SGM' ORDER BY name ASC")
         rows = cur.fetchall()
         cur.close()
@@ -189,7 +188,7 @@ button { width: 100%; padding: 14px; margin-top: 14px; border: none; border-radi
 """
 
 # ---------------------------------
-# HOME PORTAL (ADMIN / DIRECT VIEW)
+# HOME PORTAL
 # ---------------------------------
 @app.route("/")
 def home():
@@ -350,13 +349,32 @@ def mark():
         return jsonify({"success": False, "message": msg}) if is_ajax else f"""<script>alert("{msg}"); window.history.back();</script>"""
 
 # ---------------------------------
-# EXCEL REPORTS
+# COMPLETE EXCEL EXPORT (AUTO ABSENT & MISSED PUNCH HANDLING)
 # ---------------------------------
 @app.route("/download")
 def download():
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("SELECT name, action, attendance_date, attendance_time FROM attendance ORDER BY attendance_date DESC, name ASC, attendance_time ASC")
+    
+    # 1. Fetch all members except owner
+    cur.execute("SELECT name FROM users WHERE name != 'Shubham Agrawal SGM' ORDER BY name ASC")
+    users_rows = cur.fetchall()
+    members = [u["name"] for u in users_rows]
+
+    # 2. Fetch min & max attendance dates
+    cur.execute("SELECT MIN(attendance_date) as min_d, MAX(attendance_date) as max_d FROM attendance")
+    d_range = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    today_date = datetime.now(india).date()
+    start_date = d_range["min_d"] if d_range and d_range["min_d"] else today_date
+    end_date = d_range["max_d"] if d_range and d_range["max_d"] else today_date
+
+    # 3. Fetch all attendance logs
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT name, action, attendance_date, attendance_time FROM attendance ORDER BY attendance_time ASC")
     records = cur.fetchall()
     cur.close()
     conn.close()
@@ -374,27 +392,49 @@ def download():
     wb = Workbook()
     ws = wb.active
     ws.title = "Complete_Attendance"
-    ws.append(["Sr No", "Member Name", "Date", "Day", "Check In Time", "Check Out Time", "Total Spent Time"])
+    ws.append(["Sr No", "Member Name", "Date", "Day", "Check In Time", "Check Out Time", "Status / Spent Time"])
 
     sr = 1
-    for (member, date_val), times in daily_data.items():
-        day_str = date_val.strftime("%A")
-        date_str = date_val.strftime("%d-%m-%Y")
-        in_time_str = times["in"].strftime("%I:%M:%S %p") if times["in"] else "N/A"
-        out_time_str = times["out"].strftime("%I:%M:%S %p") if times["out"] else "N/A"
+    # Iterate from earliest date to latest date
+    curr = start_date
+    while curr <= end_date:
+        for member in members:
+            key = (member, curr)
+            times = daily_data.get(key, {"in": None, "out": None})
 
-        spent_str = "N/A"
-        if times["in"] and times["out"]:
-            t_in = datetime.combine(date_val, times["in"])
-            t_out = datetime.combine(date_val, times["out"])
-            if t_out > t_in:
-                diff = t_out - t_in
-                hours, remainder = divmod(diff.seconds, 3600)
-                minutes, _ = divmod(remainder, 60)
-                spent_str = f"{hours}h {minutes}m"
+            day_str = curr.strftime("%A")
+            date_str = curr.strftime("%d-%m-%Y")
 
-        ws.append([sr, member, date_str, day_str, in_time_str, out_time_str, spent_str])
-        sr += 1
+            in_val = times["in"].strftime("%I:%M:%S %p") if times["in"] else None
+            out_val = times["out"].strftime("%I:%M:%S %p") if times["out"] else None
+
+            # Condition 1: Dono Missing = Absent
+            if not in_val and not out_val:
+                status_str = "Absent"
+                in_time_str = "Absent"
+                out_time_str = "Absent"
+            # Condition 2: Check In and Out Done
+            elif in_val and out_val:
+                in_time_str = in_val
+                out_time_str = out_val
+                t_in = datetime.combine(curr, times["in"])
+                t_out = datetime.combine(curr, times["out"])
+                if t_out > t_in:
+                    diff = t_out - t_in
+                    hours, remainder = divmod(diff.seconds, 3600)
+                    minutes, _ = divmod(remainder, 60)
+                    status_str = f"Present ({hours}h {minutes}m)"
+                else:
+                    status_str = "Present"
+            # Condition 3: One punch missing
+            else:
+                in_time_str = in_val if in_val else "Missed In"
+                out_time_str = out_val if out_val else "Missed Out"
+                status_str = "Incomplete Punch"
+
+            ws.append([sr, member, date_str, day_str, in_time_str, out_time_str, status_str])
+            sr += 1
+        curr += timedelta(days=1)
 
     DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "downloads")
     os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
@@ -403,6 +443,9 @@ def download():
     wb.close()
     return send_file(FILE_PATH, as_attachment=True, download_name="SGMEA_Complete_Attendance.xlsx")
 
+# ---------------------------------
+# INDIVIDUAL EXCEL EXPORT (AUTO ABSENT & MISSED PUNCH HANDLING)
+# ---------------------------------
 @app.route("/download_user", methods=["GET", "POST"])
 def download_user():
     users = get_users_map()
@@ -419,7 +462,14 @@ def download_user():
     member = request.form.get("member")
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("SELECT action, attendance_date, attendance_time FROM attendance WHERE name=%s ORDER BY attendance_date ASC, attendance_time ASC", (member,))
+    cur.execute("SELECT MIN(attendance_date) as min_d, MAX(attendance_date) as max_d FROM attendance WHERE name=%s", (member,))
+    d_range = cur.fetchone()
+    
+    today_date = datetime.now(india).date()
+    start_date = d_range["min_d"] if d_range and d_range["min_d"] else today_date
+    end_date = d_range["max_d"] if d_range and d_range["max_d"] else today_date
+
+    cur.execute("SELECT action, attendance_date, attendance_time FROM attendance WHERE name=%s ORDER BY attendance_time ASC", (member,))
     records = cur.fetchall()
     cur.close()
     conn.close()
@@ -437,27 +487,42 @@ def download_user():
     wb = Workbook()
     ws = wb.active
     ws.title = f"{member}_Report"
-    ws.append(["Sr No", "Member Name", "Date", "Day", "Check In Time", "Check Out Time", "Total Spent Time"])
+    ws.append(["Sr No", "Member Name", "Date", "Day", "Check In Time", "Check Out Time", "Status / Spent Time"])
 
     sr = 1
-    for date_val, times in daily_data.items():
-        day_str = date_val.strftime("%A")
-        date_str = date_val.strftime("%d-%m-%Y")
-        in_time_str = times["in"].strftime("%I:%M:%S %p") if times["in"] else "N/A"
-        out_time_str = times["out"].strftime("%I:%M:%S %p") if times["out"] else "N/A"
+    curr = start_date
+    while curr <= end_date:
+        times = daily_data.get(curr, {"in": None, "out": None})
+        day_str = curr.strftime("%A")
+        date_str = curr.strftime("%d-%m-%Y")
 
-        spent_str = "N/A"
-        if times["in"] and times["out"]:
-            t_in = datetime.combine(date_val, times["in"])
-            t_out = datetime.combine(date_val, times["out"])
+        in_val = times["in"].strftime("%I:%M:%S %p") if times["in"] else None
+        out_val = times["out"].strftime("%I:%M:%S %p") if times["out"] else None
+
+        if not in_val and not out_val:
+            status_str = "Absent"
+            in_time_str = "Absent"
+            out_time_str = "Absent"
+        elif in_val and out_val:
+            in_time_str = in_val
+            out_time_str = out_val
+            t_in = datetime.combine(curr, times["in"])
+            t_out = datetime.combine(curr, times["out"])
             if t_out > t_in:
                 diff = t_out - t_in
                 hours, remainder = divmod(diff.seconds, 3600)
                 minutes, _ = divmod(remainder, 60)
-                spent_str = f"{hours}h {minutes}m"
+                status_str = f"Present ({hours}h {minutes}m)"
+            else:
+                status_str = "Present"
+        else:
+            in_time_str = in_val if in_val else "Missed In"
+            out_time_str = out_val if out_val else "Missed Out"
+            status_str = "Incomplete Punch"
 
-        ws.append([sr, member, date_str, day_str, in_time_str, out_time_str, spent_str])
+        ws.append([sr, member, date_str, day_str, in_time_str, out_time_str, status_str])
         sr += 1
+        curr += timedelta(days=1)
 
     DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "downloads")
     os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
