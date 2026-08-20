@@ -9,13 +9,18 @@ import math
 
 app = Flask(__name__)
 
+# Secret Key for Session Encryption & Security
 app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", "SGMEA_SUPER_SECURE_SGM_KEY_1441")
 
+# ---------------------------------
+# SHOP GPS SETTINGS (SHREE GANESH MEDICALS, GONDIA)
+# ---------------------------------
 SHOP_LAT = 21.4584843
 SHOP_LON = 80.1950076
-ALLOWED_RADIUS_METERS = 100
+ALLOWED_RADIUS_METERS = 100  # 100 meters shop geofence boundary
 
 def calculate_distance(lat1, lon1, lat2, lon2):
+    """Haversine formula to calculate accurate distance in meters"""
     R = 6371000
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
@@ -25,6 +30,9 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
+# ---------------------------------
+# SECURITY & CORS HEADERS
+# ---------------------------------
 @app.after_request
 def apply_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
@@ -35,6 +43,9 @@ def apply_security_headers(response):
     response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
     return response
 
+# ---------------------------------
+# DATABASE URL & CONNECTION
+# ---------------------------------
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_connection():
@@ -46,12 +57,16 @@ def get_connection():
         sslmode="require"
     )
 
+# ---------------------------------
+# INITIALIZE DATABASE SCHEMAS
+# ---------------------------------
 def init_db():
     if not DATABASE_URL:
         return
     try:
         conn = get_connection()
         cur = conn.cursor()
+
         cur.execute("""
         CREATE TABLE IF NOT EXISTS attendance(
             id SERIAL PRIMARY KEY,
@@ -62,6 +77,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """)
+
         cur.execute("""
         CREATE TABLE IF NOT EXISTS users(
             id SERIAL PRIMARY KEY,
@@ -70,11 +86,13 @@ def init_db():
             role VARCHAR(20) DEFAULT 'Candidate'
         );
         """)
+
         cur.execute("SELECT COUNT(*) as count FROM users;")
         if cur.fetchone()["count"] == 0:
             cur.execute("INSERT INTO users (name, pin, role) VALUES (%s, %s, %s)", ("Shubham Agrawal SGM", "1441", "Owner"))
             cur.execute("INSERT INTO users (name, pin, role) VALUES (%s, %s, %s)", ("Gaurav", "1234", "Employee"))
             cur.execute("INSERT INTO users (name, pin, role) VALUES (%s, %s, %s)", ("Arshi", "5678", "Employee"))
+
         conn.commit()
         cur.close()
         conn.close()
@@ -133,19 +151,27 @@ def verify_pin(name, pin):
     users = get_users_map()
     return users.get(name) == pin
 
+# ---------------------------------
+# API: DYNAMIC MEMBER LIST FOR STANDALONE APP
+# ---------------------------------
 @app.route("/api/users", methods=["GET"])
 def api_users():
     try:
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT name FROM users WHERE role != 'Owner' ORDER BY name ASC")
+        # Owner ko chhodkar sabhi staff/candidates list honge
+        cur.execute("SELECT name FROM users WHERE name != 'Shubham Agrawal SGM' ORDER BY name ASC")
         rows = cur.fetchall()
         cur.close()
         conn.close()
         return jsonify([r["name"] for r in rows])
-    except Exception:
+    except Exception as e:
+        print(f"API Error: {e}")
         return jsonify([]), 500
 
+# ---------------------------------
+# UI STYLING
+# ---------------------------------
 COMMON_STYLE = """
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
@@ -162,6 +188,9 @@ button { width: 100%; padding: 14px; margin-top: 14px; border: none; border-radi
 </style>
 """
 
+# ---------------------------------
+# HOME PORTAL (ADMIN / DIRECT VIEW)
+# ---------------------------------
 @app.route("/")
 def home():
     users = get_users_map()
@@ -188,6 +217,9 @@ def home():
 </html>
 """
 
+# ---------------------------------
+# SECURED OWNER ADMIN PANEL
+# ---------------------------------
 @app.route("/owner", methods=["GET", "POST"])
 def owner():
     message = ""
@@ -275,6 +307,9 @@ def owner():
 </html>
 """
 
+# ---------------------------------
+# MARK ATTENDANCE
+# ---------------------------------
 @app.route("/mark", methods=["POST"])
 def mark():
     name = request.form.get("name", "").strip()
@@ -288,6 +323,7 @@ def mark():
         msg = "All fields are required."
         return jsonify({"success": False, "message": msg}) if is_ajax else f"""<script>alert("{msg}"); window.history.back();</script>"""
 
+    # Location Geofencing Check
     if lat and lon:
         try:
             user_lat = float(lat)
@@ -300,10 +336,12 @@ def mark():
             msg = "Invalid GPS coordinates."
             return jsonify({"success": False, "message": msg}) if is_ajax else f"""<script>alert("{msg}"); window.history.back();</script>"""
 
+    # PIN Verification
     if not verify_pin(name, pin):
         msg = "Authentication Failed: Invalid PIN!"
         return jsonify({"success": False, "message": msg}) if is_ajax else f"""<script>alert("{msg}"); window.history.back();</script>"""
 
+    # Save to DB
     if save_data(name, action):
         msg = f"✅ {name}\n\n{action} Marked Successfully!"
         return jsonify({"success": True, "message": msg}) if is_ajax else f"""<script>alert("{msg}"); window.history.back();</script>"""
@@ -311,6 +349,9 @@ def mark():
         msg = "Duplicate Entry Blocked! Please wait 1 minute."
         return jsonify({"success": False, "message": msg}) if is_ajax else f"""<script>alert("{msg}"); window.history.back();</script>"""
 
+# ---------------------------------
+# EXCEL REPORTS
+# ---------------------------------
 @app.route("/download")
 def download():
     conn = get_connection()
