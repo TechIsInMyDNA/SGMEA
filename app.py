@@ -17,7 +17,7 @@ app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", "SGMEA_SUPER_SECURE_SGM_
 # ---------------------------------
 SHOP_LAT = 21.458439
 SHOP_LON = 80.194910
-ALLOWED_RADIUS_METERS = 1800  # 100 meters shop geofence boundary
+ALLOWED_RADIUS_METERS = 1800  # 1.8 KM safe drift window
 
 def calculate_distance(lat1, lon1, lat2, lon2):
     """Haversine formula to calculate accurate distance in meters"""
