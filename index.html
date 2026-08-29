@@ -40,14 +40,25 @@
     <button class="out" onclick="processAttendance('Check Out')">❌ Check Out</button>
 
     <div class="download" onclick="exportCompleteExcel()">📥 Download Complete Excel</div>
-    <div class="download" style="background:#475569;" onclick="exportIndividualExcel()">📊 Individual Member Report</div>
+    <div class="download" style="background:#475569;" onclick="toggleView('individualCard')">📊 Individual Member Report</div>
     <div class="owner-btn" onclick="toggleView('ownerLoginCard')">👑 Owner Control (Shubham Agrawal SGM)</div>
 
     <div class="status-box" id="statusMsg">📍 Geofence Active</div>
     <div class="footer">Powered by SGMEA Supabase Cloud Platform</div>
 </div>
 
-<!-- 2. OWNER LOGIN CARD -->
+<!-- 2. INDIVIDUAL REPORT SELECTOR CARD -->
+<div class="card hidden" id="individualCard">
+    <h3>📊 Individual Report</h3>
+    <p style="text-align:center; color:#94a3b8; font-size:13px; margin-bottom:15px;">Select staff member to download report</p>
+    <select id="individualUserSelect" required>
+        <option value="" disabled selected>Select Staff / Candidate</option>
+    </select>
+    <button class="in" onclick="downloadSelectedIndividualExcel()">📥 Download Member Excel</button>
+    <div class="download" style="background:#475569;" onclick="toggleView('mainCard')">⬅ Back to Home Portal</div>
+</div>
+
+<!-- 3. OWNER LOGIN CARD -->
 <div class="card hidden" id="ownerLoginCard">
     <h3>👑 Owner Master Access</h3>
     <p style="text-align:center; color:#94a3b8; font-size:13px; margin-bottom:15px;">Master PIN Required</p>
@@ -56,7 +67,7 @@
     <div class="download" style="background:#475569;" onclick="toggleView('mainCard')">⬅ Back to Home Portal</div>
 </div>
 
-<!-- 3. OWNER ADMIN DASHBOARD -->
+<!-- 4. OWNER ADMIN DASHBOARD -->
 <div class="card hidden" id="ownerAdminCard">
     <h3>👑 Owner Admin Control</h3>
     <p style="text-align:center; color:#34d399; font-weight:bold; margin-bottom:15px;">🔓 Owner Access Granted (Shubham Agrawal SGM)</p>
@@ -80,7 +91,7 @@
 
 <script>
     // ----------------------------------------------------
-    // SUPABASE CONFIGURATION (Project: ecadhrnxjutgdkctjipu)
+    // SUPABASE CONFIGURATION
     // ----------------------------------------------------
     const SUPABASE_URL = "https://ecadhrnxjutgdkctjipu.supabase.co";
     const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVjYWRobnJ4anV0Z2RrY2xqaXB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDQwNjEsImV4cCI6MjA5ODEyMDA2MX0.nQn7RfbQvtlq3_GBZzEOAN_DP4-CD0VmJFQVycaFwVg"; // Paste your anon key here
@@ -117,7 +128,7 @@
                 ];
             }
         } catch (e) {
-            console.log("Supabase connection fallback to default list");
+            console.log("Supabase connection fallback");
         }
         renderUserDropdown();
         renderAdminList();
@@ -125,13 +136,22 @@
 
     function renderUserDropdown() {
         const select = document.getElementById("userSelect");
+        const indSelect = document.getElementById("individualUserSelect");
+        
         select.innerHTML = '<option value="" disabled selected>Select Staff / Candidate</option>';
+        indSelect.innerHTML = '<option value="" disabled selected>Select Staff / Candidate</option>';
+
         localUsers.forEach(u => {
             if (u.name !== "Shubham Agrawal SGM" && u.role !== "Owner") {
-                const opt = document.createElement("option");
-                opt.value = u.name;
-                opt.textContent = u.name;
-                select.appendChild(opt);
+                const opt1 = document.createElement("option");
+                opt1.value = u.name;
+                opt1.textContent = u.name;
+                select.appendChild(opt1);
+
+                const opt2 = document.createElement("option");
+                opt2.value = u.name;
+                opt2.textContent = u.name;
+                indSelect.appendChild(opt2);
             }
         });
     }
@@ -173,10 +193,12 @@
                 }
 
                 const now = new Date();
-                const todayDate = now.toLocaleDateString('en-CA');
+                const yyyy = now.getFullYear();
+                const mm = String(now.getMonth() + 1).padStart(2, '0');
+                const dd = String(now.getDate()).padStart(2, '0');
+                const todayDate = `${yyyy}-${mm}-${dd}`;
                 const timeStr = now.toLocaleTimeString('en-US', { hour12: true });
 
-                // Check 1-minute duplicate
                 const oneMinAgo = new Date(now.getTime() - 60000).toISOString();
                 const { data: duplicate } = await supabaseClient
                     .from('attendance')
@@ -191,7 +213,6 @@
                     return;
                 }
 
-                // Insert into Supabase
                 const { error: insertError } = await supabaseClient.from('attendance').insert([
                     {
                         name: name,
@@ -255,44 +276,68 @@
 
     function toggleView(viewId) {
         document.getElementById("mainCard").classList.add("hidden");
+        document.getElementById("individualCard").classList.add("hidden");
         document.getElementById("ownerLoginCard").classList.add("hidden");
         document.getElementById("ownerAdminCard").classList.add("hidden");
         document.getElementById(viewId).classList.remove("hidden");
     }
 
-    // Excel Export Logic
-    async function fetchAttendanceRecords(targetMember = null) {
-        let query = supabaseClient.from('attendance').select('*').order('raw_ts', { ascending: true });
-        if (targetMember) query = query.eq('name', targetMember);
-        const { data } = await query;
-        return data || [];
+    // ----------------------------------------------------
+    // ROBUST EXCEL EXPORT ENGINE (SHEETJS + SUPABASE)
+    // ----------------------------------------------------
+    function parseDateString(str) {
+        const [y, m, d] = str.split('-').map(Number);
+        return new Date(y, m - 1, d);
+    }
+
+    function formatDateString(d) {
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+    }
+
+    function parseTimeString(timeStr) {
+        if (!timeStr) return 0;
+        const [time, modifier] = timeStr.split(' ');
+        let [hours, minutes, seconds] = time.split(':').map(Number);
+        if (seconds === undefined) seconds = 0;
+        if (modifier === 'PM' && hours < 12) hours += 12;
+        if (modifier === 'AM' && hours === 12) hours = 0;
+        return (hours * 3600) + (minutes * 60) + seconds;
     }
 
     async function generateExcelDataset(targetMember = null) {
-        const members = localUsers
-            .filter(u => u.name !== "Shubham Agrawal SGM" && u.role !== "Owner" && (!targetMember || u.name === targetMember))
-            .map(u => u.name);
+        let query = supabaseClient.from('attendance').select('*').order('attendance_date', { ascending: true });
+        if (targetMember) query = query.eq('name', targetMember);
+        
+        const { data: logs, error } = await query;
+        if (error) {
+            alert("Database Error: " + error.message);
+            return null;
+        }
 
-        const logs = await fetchAttendanceRecords(targetMember);
-        if (logs.length === 0) {
+        if (!logs || logs.length === 0) {
             alert("No attendance records found yet to export.");
             return null;
         }
 
-        const dates = logs.map(a => new Date(a.attendance_date));
-        const minDate = new Date(Math.min(...dates));
-        const maxDate = new Date(Math.max(...dates));
+        const members = targetMember ? [targetMember] : localUsers
+            .filter(u => u.name !== "Shubham Agrawal SGM" && u.role !== "Owner")
+            .map(u => u.name);
+
+        const dateStrings = logs.map(a => a.attendance_date).sort();
+        const minDate = parseDateString(dateStrings[0]);
+        const maxDate = parseDateString(dateStrings[dateStrings.length - 1]);
 
         const dailyMap = {};
         logs.forEach(a => {
             const k = `${a.name}_${a.attendance_date}`;
-            if (!dailyMap[k]) dailyMap[k] = { in: null, out: null, rawIn: null, rawOut: null };
+            if (!dailyMap[k]) dailyMap[k] = { in: null, out: null };
             if (a.action === "Check In" && !dailyMap[k].in) {
                 dailyMap[k].in = a.attendance_time;
-                dailyMap[k].rawIn = new Date(a.raw_ts);
             } else if (a.action === "Check Out") {
                 dailyMap[k].out = a.attendance_time;
-                dailyMap[k].rawOut = new Date(a.raw_ts);
             }
         });
 
@@ -301,13 +346,13 @@
         let curr = new Date(minDate);
 
         while (curr <= maxDate) {
-            const dateStr = curr.toLocaleDateString('en-CA');
-            const displayDate = curr.toLocaleDateString('en-GB');
+            const dateKey = formatDateString(curr);
+            const displayDate = `${String(curr.getDate()).padStart(2, '0')}-${String(curr.getMonth() + 1).padStart(2, '0')}-${curr.getFullYear()}`;
             const dayStr = curr.toLocaleDateString('en-US', { weekday: 'long' });
 
             members.forEach(member => {
-                const k = `${member}_${dateStr}`;
-                const data = dailyMap[k] || { in: null, out: null, rawIn: null, rawOut: null };
+                const k = `${member}_${dateKey}`;
+                const data = dailyMap[k] || { in: null, out: null };
 
                 let inStr = data.in || "Absent";
                 let outStr = data.out || "Absent";
@@ -316,9 +361,9 @@
                 if (data.in && data.out) {
                     inStr = data.in;
                     outStr = data.out;
-                    const diffMs = data.rawOut - data.rawIn;
-                    if (diffMs > 0) {
-                        const totalMins = Math.floor(diffMs / 60000);
+                    const diffSec = parseTimeString(data.out) - parseTimeString(data.in);
+                    if (diffSec > 0) {
+                        const totalMins = Math.floor(diffSec / 60);
                         const hrs = Math.floor(totalMins / 60);
                         const mins = totalMins % 60;
                         statusStr = `Present (${hrs}h ${mins}m)`;
@@ -341,25 +386,35 @@
     }
 
     async function exportCompleteExcel() {
+        document.getElementById("statusMsg").innerText = "⏳ Generating Complete Excel...";
         const rows = await generateExcelDataset();
-        if (!rows) return;
+        if (!rows) {
+            document.getElementById("statusMsg").innerText = "📍 Geofence Active";
+            return;
+        }
+
         const ws = XLSX.utils.aoa_to_sheet(rows);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Complete_Attendance");
         XLSX.writeFile(wb, "SGMEA_Complete_Attendance.xlsx");
+        document.getElementById("statusMsg").innerText = "✅ Complete Excel Downloaded";
     }
 
-    async function exportIndividualExcel() {
-        const candidateMembers = localUsers.filter(u => u.name !== "Shubham Agrawal SGM" && u.role !== "Owner");
-        const defaultName = candidateMembers[0]?.name || "";
-        const name = prompt("Enter Member Name for Individual Report:", defaultName);
-        if (!name) return;
-        const rows = await generateExcelDataset(name);
+    async function downloadSelectedIndividualExcel() {
+        const member = document.getElementById("individualUserSelect").value;
+        if (!member) {
+            alert("Please select a staff member first!");
+            return;
+        }
+
+        const rows = await generateExcelDataset(member);
         if (!rows) return;
+
         const ws = XLSX.utils.aoa_to_sheet(rows);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, `${name}_Report`);
-        XLSX.writeFile(wb, `${name}_Attendance_Report.xlsx`);
+        XLSX.utils.book_append_sheet(wb, ws, `${member}_Report`);
+        XLSX.writeFile(wb, `${member}_Attendance_Report.xlsx`);
+        toggleView('mainCard');
     }
 
     window.onload = loadUsers;
