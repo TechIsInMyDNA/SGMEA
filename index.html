@@ -8,8 +8,8 @@
     <!-- SheetJS for Client-Side Excel Generation -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     
-    <!-- Supabase JS SDK -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- Supabase JS Library -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.8/dist/umd/supabase.min.js"></script>
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
@@ -24,7 +24,7 @@
         .owner-btn { background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); color: white; text-decoration: none; display: block; text-align: center; padding: 12px; margin-top: 12px; border-radius: 12px; font-weight: bold; cursor: pointer; }
         .status-box { margin-top: 15px; padding: 10px; border-radius: 8px; font-size: 12px; text-align: center; background: rgba(15, 23, 42, 0.6); border: 1px solid #334155; color: #38bdf8; }
         .footer { margin-top: 22px; text-align: center; font-size: 12px; color: #94a3b8; }
-        .hidden { display: none; }
+        .hidden { display: none !important; }
     </style>
 </head>
 <body>
@@ -33,7 +33,7 @@
 <div class="card" id="mainCard">
     <h2>🛡️ SGMEA Portal</h2>
     <select id="userSelect" required>
-        <option value="" disabled selected>Loading staff list...</option>
+        <option value="" disabled selected>Select Staff / Candidate</option>
     </select>
     <input type="password" id="pinInput" placeholder="Enter Confidential PIN" required autocomplete="off">
     <button class="in" onclick="processAttendance('Check In')">✅ Check In</button>
@@ -44,7 +44,7 @@
     <div class="owner-btn" onclick="toggleView('ownerLoginCard')">👑 Owner Control (Shubham Agrawal SGM)</div>
 
     <div class="status-box" id="statusMsg">📍 Geofence Active</div>
-    <div class="footer">Powered by SGMEA Supabase Cloud Platform</div>
+    <div class="footer">Powered by SGMEA Cloud Platform</div>
 </div>
 
 <!-- 2. INDIVIDUAL REPORT SELECTOR CARD -->
@@ -90,18 +90,30 @@
 </div>
 
 <script>
+    // ----------------------------------------------------
+    // SUPABASE SETUP (SAFE INITIALIZATION)
+    // ----------------------------------------------------
     const SUPABASE_URL = "https://ecadhrnxjutgdkcljipu.supabase.co";
     const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVjYWRobnJ4anV0Z2RrY2xqaXB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDQwNjEsImV4cCI6MjA5ODEyMDA2MX0.nQn7RfbQvtlq3_GBZzEOAN_DP4-CD0VmJFQVycaFwVg";
 
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    let sbClient = null;
+    try {
+        if (window.supabase && window.supabase.createClient) {
+            sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        }
+    } catch (e) {
+        console.warn("Client init error:", e);
+    }
 
     const SHOP_LAT = 21.458439;
     const SHOP_LON = 80.194910;
-    const ALLOWED_RADIUS = 1800;
+    const ALLOWED_RADIUS = 1800; // 1.8 KM safe drift window
 
+    // Initial Local Fallback Members
     let localUsers = [
         { name: "Gaurav", pin: "1234", role: "Employee" },
-        { name: "Arshi", pin: "5678", role: "Employee" }
+        { name: "Arshi", pin: "5678", role: "Employee" },
+        { name: "Shubham Agrawal SGM", pin: "1441", role: "Owner" }
     ];
 
     function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -112,21 +124,6 @@
                   Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
                   Math.sin(dLon/2) * Math.sin(dLon/2);
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    }
-
-    async function loadUsers() {
-        renderUserDropdown();
-        renderAdminList();
-        try {
-            const { data, error } = await supabase.from('users').select('*').order('name', { ascending: true });
-            if (!error && data && data.length > 0) {
-                localUsers = data;
-                renderUserDropdown();
-                renderAdminList();
-            }
-        } catch (e) {
-            console.log("Using default fallback users list");
-        }
     }
 
     function renderUserDropdown() {
@@ -161,6 +158,76 @@
         });
     }
 
+    // Load Users from Cloud
+    async function loadUsers() {
+        renderUserDropdown();
+        renderAdminList();
+
+        if (sbClient) {
+            try {
+                const { data, error } = await sbClient.from('users').select('*').order('name', { ascending: true });
+                if (!error && data && data.length > 0) {
+                    localUsers = data;
+                    renderUserDropdown();
+                    renderAdminList();
+                }
+            } catch (err) {
+                console.warn("Using local users cache");
+            }
+        }
+    }
+
+    // View Routing
+    function toggleView(viewId) {
+        document.getElementById("mainCard").classList.add("hidden");
+        document.getElementById("individualCard").classList.add("hidden");
+        document.getElementById("ownerLoginCard").classList.add("hidden");
+        document.getElementById("ownerAdminCard").classList.add("hidden");
+        document.getElementById(viewId).classList.remove("hidden");
+    }
+
+    function verifyOwner() {
+        const pin = document.getElementById("masterPinInput").value.trim();
+        if (pin === "1441") {
+            toggleView("ownerAdminCard");
+            document.getElementById("masterPinInput").value = "";
+        } else {
+            alert("Incorrect Master PIN! Access Denied.");
+        }
+    }
+
+    function lockOwnerPanel() {
+        toggleView("mainCard");
+    }
+
+    async function registerMember() {
+        const name = document.getElementById("newMemberName").value.trim();
+        const pin = document.getElementById("newMemberPin").value.trim();
+        const role = document.getElementById("newMemberRole").value;
+
+        if (!name || !pin) {
+            alert("Please provide both name and PIN.");
+            return;
+        }
+
+        localUsers.push({ name, pin, role });
+        renderUserDropdown();
+        renderAdminList();
+
+        if (sbClient) {
+            try {
+                await sbClient.from('users').insert([{ name, pin, role }]);
+            } catch (e) {
+                console.warn("Supabase background user insert failed");
+            }
+        }
+
+        alert(`Member "${name}" Registered Successfully!`);
+        document.getElementById("newMemberName").value = "";
+        document.getElementById("newMemberPin").value = "";
+    }
+
+    // Attendance Submission
     async function processAttendance(action) {
         const name = document.getElementById("userSelect").value;
         const pin = document.getElementById("pinInput").value.trim();
@@ -194,23 +261,30 @@
                 const todayDate = `${yyyy}-${mm}-${dd}`;
                 const timeStr = now.toLocaleTimeString('en-US', { hour12: true });
 
-                const { error } = await supabase.from('attendance').insert([
-                    {
-                        name: name,
-                        action: action,
-                        attendance_date: todayDate,
-                        attendance_time: timeStr,
-                        raw_ts: now.toISOString()
+                if (sbClient) {
+                    try {
+                        const { error } = await sbClient.from('attendance').insert([
+                            {
+                                name: name,
+                                action: action,
+                                attendance_date: todayDate,
+                                attendance_time: timeStr,
+                                raw_ts: now.toISOString()
+                            }
+                        ]);
+                        if (error) {
+                            alert("Database Save Error: " + error.message);
+                            return;
+                        }
+                    } catch (e) {
+                        alert("Network error saving attendance: " + e.message);
+                        return;
                     }
-                ]);
-
-                if (error) {
-                    alert("Supabase Save Error: " + error.message);
-                } else {
-                    alert(`✅ ${name}\n\n${action} Marked Successfully!`);
-                    document.getElementById("pinInput").value = "";
-                    document.getElementById("statusMsg").innerText = "✅ Attendance Recorded Live";
                 }
+
+                alert(`✅ ${name}\n\n${action} Marked Successfully!`);
+                document.getElementById("pinInput").value = "";
+                document.getElementById("statusMsg").innerText = "✅ Attendance Recorded Live";
             },
             () => {
                 alert("GPS Error: High Accuracy Location enable karein.");
@@ -220,47 +294,25 @@
         );
     }
 
-    function verifyOwner() {
-        const pin = document.getElementById("masterPinInput").value.trim();
-        if (pin === "1441") {
-            toggleView("ownerAdminCard");
-            document.getElementById("masterPinInput").value = "";
-        } else {
-            alert("Incorrect Master PIN! Access Denied.");
-        }
-    }
-
-    async function registerMember() {
-        const name = document.getElementById("newMemberName").value.trim();
-        const pin = document.getElementById("newMemberPin").value.trim();
-        const role = document.getElementById("newMemberRole").value;
-
-        if (!name || !pin) {
-            alert("Please provide both name and PIN.");
-            return;
-        }
-
-        const { error } = await supabase.from('users').insert([{ name, pin, role }]);
-        if (error) {
-            alert("Database Error: " + error.message);
-        } else {
-            alert(`Member "${name}" Registered Successfully!`);
-            document.getElementById("newMemberName").value = "";
-            document.getElementById("newMemberPin").value = "";
-            loadUsers();
-        }
-    }
-
-    function lockOwnerPanel() {
-        toggleView("mainCard");
-    }
-
-    function toggleView(viewId) {
-        document.getElementById("mainCard").classList.add("hidden");
-        document.getElementById("individualCard").classList.add("hidden");
-        document.getElementById("ownerLoginCard").classList.add("hidden");
-        document.getElementById("ownerAdminCard").classList.add("hidden");
-        document.getElementById(viewId).classList.remove("hidden");
+    // ----------------------------------------------------
+    // ROBUST MOBILE / APK EXCEL DOWNLOAD ENGINE
+    // ----------------------------------------------------
+    function triggerMobileDownload(workbook, filename) {
+        const wbout = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+        const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        
+        setTimeout(() => {
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }, 1000);
     }
 
     function parseTimeString(timeStr) {
@@ -277,7 +329,12 @@
     }
 
     async function generateExcelDataset(targetMember = null) {
-        let query = supabase.from('attendance').select('*').order('attendance_date', { ascending: true });
+        if (!sbClient) {
+            alert("Database connection not ready!");
+            return null;
+        }
+
+        let query = sbClient.from('attendance').select('*').order('attendance_date', { ascending: true });
         if (targetMember) query = query.eq('name', targetMember);
         
         const { data: logs, error } = await query;
@@ -287,7 +344,7 @@
         }
 
         if (!logs || logs.length === 0) {
-            alert("Database me abhi tak koi attendance entry nahi hai. Pehle ek Check In/Check Out punch karein!");
+            alert("Database mein abhi koi attendance entry nahi hai. Pehle Check In mark karein!");
             return null;
         }
 
@@ -368,7 +425,7 @@
         const ws = XLSX.utils.aoa_to_sheet(rows);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Complete_Attendance");
-        XLSX.writeFile(wb, "SGMEA_Complete_Attendance.xlsx");
+        triggerMobileDownload(wb, "SGMEA_Complete_Attendance.xlsx");
         document.getElementById("statusMsg").innerText = "✅ Complete Excel Downloaded";
     }
 
@@ -385,11 +442,12 @@
         const ws = XLSX.utils.aoa_to_sheet(rows);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, `${member}_Report`);
-        XLSX.writeFile(wb, `${member}_Attendance_Report.xlsx`);
+        triggerMobileDownload(wb, `${member}_Attendance_Report.xlsx`);
         toggleView('mainCard');
     }
 
-    window.onload = loadUsers;
+    // Auto-init on page load
+    window.addEventListener('DOMContentLoaded', loadUsers);
 </script>
 
 </body>
