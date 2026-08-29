@@ -33,7 +33,7 @@
 </head>
 <body>
 
-<!-- MAIN ATTENDANCE CARD -->
+<!-- 1. MAIN ATTENDANCE CARD -->
 <div class="card" id="mainCard">
     <h2>🛡️ SGMEA Portal</h2>
     <select id="userSelect" required>
@@ -47,11 +47,11 @@
     <div class="download" style="background:#475569;" onclick="exportIndividualExcel()">📊 Individual Member Report</div>
     <div class="owner-btn" onclick="toggleView('ownerLoginCard')">👑 Owner Control (Shubham Agrawal SGM)</div>
 
-    <div class="status-box" id="statusMsg">📍 Geofence Active (1.8 KM Safe Drift)</div>
+    <div class="status-box" id="statusMsg">📍 Geofence Active</div>
     <div class="footer">Powered by SGMEA 100% Serverless Platform</div>
 </div>
 
-<!-- OWNER LOGIN CARD -->
+<!-- 2. OWNER LOGIN CARD -->
 <div class="card hidden" id="ownerLoginCard">
     <h3>👑 Owner Master Access</h3>
     <p style="text-align:center; color:#94a3b8; font-size:13px; margin-bottom:15px;">Master PIN Required</p>
@@ -60,7 +60,7 @@
     <div class="download" style="background:#475569;" onclick="toggleView('mainCard')">⬅ Back to Home Portal</div>
 </div>
 
-<!-- OWNER ADMIN DASHBOARD -->
+<!-- 3. OWNER ADMIN DASHBOARD -->
 <div class="card hidden" id="ownerAdminCard">
     <h3>👑 Owner Admin Control</h3>
     <p style="text-align:center; color:#34d399; font-weight:bold; margin-bottom:15px;">🔓 Owner Access Granted (Shubham Agrawal SGM)</p>
@@ -84,11 +84,12 @@
 
 <script>
     // ----------------------------------------------------
-    // FIREBASE INITIALIZATION (EXACT SGM CREDENTIALS)
+    // FIREBASE INITIALIZATION
     // ----------------------------------------------------
     const firebaseConfig = {
         apiKey: "AIzaSyCiNPbA4nfyXMPAH_4tyxzEkXZXqyNbrbQv0",
         authDomain: "sgmea-21ce4.firebaseapp.com",
+        databaseURL: "https://sgmea-21ce4-default-rtdb.firebaseio.com",
         projectId: "sgmea-21ce4",
         storageBucket: "sgmea-21ce4.firebasestorage.app",
         messagingSenderId: "810679421144",
@@ -108,7 +109,8 @@
     function decryptData(cipherText) {
         try {
             const bytes = CryptoJS.AES.decrypt(cipherText, AES_SECRET);
-            return bytes.toString(CryptoJS.enc.Utf8);
+            const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+            return decrypted || cipherText;
         } catch (e) {
             return cipherText;
         }
@@ -150,11 +152,12 @@
         localAttendance = Object.values(data);
     });
 
+    // Render Dropdown (Strictly Excludes Owner)
     function renderUserDropdown() {
         const select = document.getElementById("userSelect");
         select.innerHTML = '<option value="" disabled selected>Select Staff / Candidate</option>';
         Object.values(localUsers).forEach(u => {
-            if (u.name !== "Shubham Agrawal SGM") {
+            if (u.name !== "Shubham Agrawal SGM" && u.role !== "Owner") {
                 const opt = document.createElement("option");
                 opt.value = u.name;
                 opt.textContent = u.name;
@@ -163,6 +166,7 @@
         });
     }
 
+    // Render List in Owner Panel
     function renderAdminList() {
         const tbl = document.getElementById("membersTable");
         tbl.innerHTML = "";
@@ -183,7 +187,6 @@
             return;
         }
 
-        // Validate PIN via AES Decryption
         const foundUser = Object.values(localUsers).find(u => u.name === name);
         if (!foundUser || decryptData(foundUser.pin) !== pin) {
             alert("Authentication Failed: Invalid PIN!");
@@ -201,7 +204,6 @@
                     return;
                 }
 
-                // Prevent duplicates within 1 minute
                 const now = new Date();
                 const todayStr = now.toLocaleDateString('en-CA');
                 const timeStr = now.toLocaleTimeString('en-US', { hour12: true });
@@ -216,7 +218,6 @@
                     return;
                 }
 
-                // Save Punch to Firebase JSON
                 const punchRef = db.ref("attendance").push();
                 punchRef.set({
                     name: name,
@@ -282,12 +283,10 @@
         document.getElementById(viewId).classList.remove("hidden");
     }
 
-    // ----------------------------------------------------
-    // IN-BROWSER EXCEL GENERATION (AUTO ABSENT & MISSED PUNCH)
-    // ----------------------------------------------------
+    // In-Browser Excel Generation (Auto Absent & Incomplete Tracking)
     function generateExcelDataset(targetMember = null) {
         const members = Object.values(localUsers)
-            .filter(u => u.name !== "Shubham Agrawal SGM" && (!targetMember || u.name === targetMember))
+            .filter(u => u.name !== "Shubham Agrawal SGM" && u.role !== "Owner" && (!targetMember || u.name === targetMember))
             .map(u => u.name);
 
         if (localAttendance.length === 0) {
@@ -366,7 +365,9 @@
     }
 
     function exportIndividualExcel() {
-        const name = prompt("Enter Member Name for Individual Report:", Object.values(localUsers)[1]?.name || "");
+        const candidateMembers = Object.values(localUsers).filter(u => u.name !== "Shubham Agrawal SGM" && u.role !== "Owner");
+        const defaultName = candidateMembers[0]?.name || "";
+        const name = prompt("Enter Member Name for Individual Report:", defaultName);
         if (!name) return;
         const rows = generateExcelDataset(name);
         if (!rows) return;
