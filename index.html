@@ -8,12 +8,8 @@
     <!-- SheetJS for Client-Side Excel Generation -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     
-    <!-- CryptoJS for AES-256 Security -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
-
-    <!-- Firebase SDKs (v9 Compat) -->
-    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+    <!-- Supabase JS Client (v2) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
@@ -48,7 +44,7 @@
     <div class="owner-btn" onclick="toggleView('ownerLoginCard')">👑 Owner Control (Shubham Agrawal SGM)</div>
 
     <div class="status-box" id="statusMsg">📍 Geofence Active</div>
-    <div class="footer">Powered by SGMEA 100% Serverless Platform</div>
+    <div class="footer">Powered by SGMEA Supabase Cloud Platform</div>
 </div>
 
 <!-- 2. OWNER LOGIN CARD -->
@@ -84,45 +80,19 @@
 
 <script>
     // ----------------------------------------------------
-    // FIREBASE INITIALIZATION
+    // SUPABASE CONFIGURATION (Project: ecadhrnxjutgdkctjipu)
     // ----------------------------------------------------
-    const firebaseConfig = {
-        apiKey: "AIzaSyCiNPbA4nfyXMPAH_4tyxzEkXZXqyNbrbQv0",
-        authDomain: "sgmea-21ce4.firebaseapp.com",
-        databaseURL: "https://sgmea-21ce4-default-rtdb.firebaseio.com",
-        projectId: "sgmea-21ce4",
-        storageBucket: "sgmea-21ce4.firebasestorage.app",
-        messagingSenderId: "810679421144",
-        appId: "1:810679421144:web:ca31fb9b0ceb20c77fd67a"
-    };
+    const SUPABASE_URL = "https://ecadhrnxjutgdkctjipu.supabase.co";
+    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVjYWRobnJ4anV0Z2RrY2xqaXB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDQwNjEsImV4cCI6MjA5ODEyMDA2MX0.nQn7RfbQvtlq3_GBZzEOAN_DP4-CD0VmJFQVycaFwVg"; // Paste your anon key here
 
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.database();
-
-    // AES-256 Master Salt
-    const AES_SECRET = "SGMEA_SUPER_SECURE_SGM_KEY_1441";
-
-    function encryptData(text) {
-        return CryptoJS.AES.encrypt(text, AES_SECRET).toString();
-    }
-
-    function decryptData(cipherText) {
-        try {
-            const bytes = CryptoJS.AES.decrypt(cipherText, AES_SECRET);
-            const decrypted = bytes.toString(CryptoJS.enc.Utf8);
-            return decrypted || cipherText;
-        } catch (e) {
-            return cipherText;
-        }
-    }
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     // Shop Geofence Coordinates (Shree Ganesh Medicals, Gondia)
     const SHOP_LAT = 21.458439;
     const SHOP_LON = 80.194910;
     const ALLOWED_RADIUS = 1800; // 1.8 KM safe drift window
 
-    let localUsers = {};
-    let localAttendance = [];
+    let localUsers = [];
 
     function calculateDistance(lat1, lon1, lat2, lon2) {
         const R = 6371000;
@@ -134,29 +104,29 @@
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     }
 
-    // Realtime Sync Users & Initial Database Seed
-    db.ref("users").on("value", (snapshot) => {
-        localUsers = snapshot.val() || {};
-        if (Object.keys(localUsers).length === 0) {
-            db.ref("users/Shubham_Agrawal_SGM").set({ name: "Shubham Agrawal SGM", pin: encryptData("1441"), role: "Owner" });
-            db.ref("users/Gaurav").set({ name: "Gaurav", pin: encryptData("1234"), role: "Employee" });
-            db.ref("users/Arshi").set({ name: "Arshi", pin: encryptData("5678"), role: "Employee" });
+    async function loadUsers() {
+        try {
+            const { data, error } = await supabaseClient.from('users').select('*').order('name', { ascending: true });
+            if (data && data.length > 0) {
+                localUsers = data;
+            } else {
+                localUsers = [
+                    { name: "Gaurav", pin: "1234", role: "Employee" },
+                    { name: "Arshi", pin: "5678", role: "Employee" },
+                    { name: "Shubham Agrawal SGM", pin: "1441", role: "Owner" }
+                ];
+            }
+        } catch (e) {
+            console.log("Supabase connection fallback to default list");
         }
         renderUserDropdown();
         renderAdminList();
-    });
+    }
 
-    // Realtime Sync Attendance Logs
-    db.ref("attendance").on("value", (snapshot) => {
-        const data = snapshot.val() || {};
-        localAttendance = Object.values(data);
-    });
-
-    // Render Dropdown (Strictly Excludes Owner)
     function renderUserDropdown() {
         const select = document.getElementById("userSelect");
         select.innerHTML = '<option value="" disabled selected>Select Staff / Candidate</option>';
-        Object.values(localUsers).forEach(u => {
+        localUsers.forEach(u => {
             if (u.name !== "Shubham Agrawal SGM" && u.role !== "Owner") {
                 const opt = document.createElement("option");
                 opt.value = u.name;
@@ -166,19 +136,17 @@
         });
     }
 
-    // Render List in Owner Panel
     function renderAdminList() {
         const tbl = document.getElementById("membersTable");
         tbl.innerHTML = "";
-        Object.values(localUsers).forEach(u => {
+        localUsers.forEach(u => {
             const tr = document.createElement("tr");
             tr.innerHTML = `<td style='padding:6px; border-bottom:1px solid #1e293b;'>${u.name} (${u.role})</td>`;
             tbl.appendChild(tr);
         });
     }
 
-    // Attendance Verification & Submission
-    function processAttendance(action) {
+    async function processAttendance(action) {
         const name = document.getElementById("userSelect").value;
         const pin = document.getElementById("pinInput").value.trim();
 
@@ -187,8 +155,8 @@
             return;
         }
 
-        const foundUser = Object.values(localUsers).find(u => u.name === name);
-        if (!foundUser || decryptData(foundUser.pin) !== pin) {
+        const foundUser = localUsers.find(u => u.name === name);
+        if (!foundUser || foundUser.pin !== pin) {
             alert("Authentication Failed: Invalid PIN!");
             return;
         }
@@ -196,7 +164,7 @@
         document.getElementById("statusMsg").innerText = "⏳ Verifying GPS location...";
 
         navigator.geolocation.getCurrentPosition(
-            (pos) => {
+            async (pos) => {
                 const distance = calculateDistance(SHOP_LAT, SHOP_LON, pos.coords.latitude, pos.coords.longitude);
                 if (distance > ALLOWED_RADIUS) {
                     alert(`❌ Attendance Rejected!\nAap dukaan ke daayre se bahar hain (${Math.round(distance)}m).\nSirf Shree Ganesh Medicals se entry lag sakti hai.`);
@@ -205,31 +173,42 @@
                 }
 
                 const now = new Date();
-                const todayStr = now.toLocaleDateString('en-CA');
+                const todayDate = now.toLocaleDateString('en-CA');
                 const timeStr = now.toLocaleTimeString('en-US', { hour12: true });
 
-                const isDuplicate = localAttendance.some(a => 
-                    a.name === name && a.action === action && a.date === todayStr && 
-                    (now.getTime() - new Date(a.raw_ts).getTime()) < 60000
-                );
+                // Check 1-minute duplicate
+                const oneMinAgo = new Date(now.getTime() - 60000).toISOString();
+                const { data: duplicate } = await supabaseClient
+                    .from('attendance')
+                    .select('id')
+                    .eq('name', name)
+                    .eq('action', action)
+                    .gte('raw_ts', oneMinAgo)
+                    .limit(1);
 
-                if (isDuplicate) {
+                if (duplicate && duplicate.length > 0) {
                     alert("Duplicate Entry Blocked! Please wait 1 minute.");
                     return;
                 }
 
-                const punchRef = db.ref("attendance").push();
-                punchRef.set({
-                    name: name,
-                    action: action,
-                    date: todayStr,
-                    time: timeStr,
-                    raw_ts: now.toISOString()
-                });
+                // Insert into Supabase
+                const { error: insertError } = await supabaseClient.from('attendance').insert([
+                    {
+                        name: name,
+                        action: action,
+                        attendance_date: todayDate,
+                        attendance_time: timeStr,
+                        raw_ts: now.toISOString()
+                    }
+                ]);
 
-                alert(`✅ ${name}\n\n${action} Marked Successfully!`);
-                document.getElementById("pinInput").value = "";
-                document.getElementById("statusMsg").innerText = "✅ Attendance Recorded Live";
+                if (insertError) {
+                    alert("Error recording attendance: " + insertError.message);
+                } else {
+                    alert(`✅ ${name}\n\n${action} Marked Successfully!`);
+                    document.getElementById("pinInput").value = "";
+                    document.getElementById("statusMsg").innerText = "✅ Attendance Recorded Live";
+                }
             },
             () => {
                 alert("GPS Error: Please enable High Accuracy Location in your phone.");
@@ -239,7 +218,6 @@
         );
     }
 
-    // Owner Panel Operations
     function verifyOwner() {
         const pin = document.getElementById("masterPinInput").value.trim();
         if (pin === "1441") {
@@ -250,7 +228,7 @@
         }
     }
 
-    function registerMember() {
+    async function registerMember() {
         const name = document.getElementById("newMemberName").value.trim();
         const pin = document.getElementById("newMemberPin").value.trim();
         const role = document.getElementById("newMemberRole").value;
@@ -260,16 +238,15 @@
             return;
         }
 
-        const key = name.replace(/[^a-zA-Z0-9]/g, "_");
-        db.ref("users/" + key).set({
-            name: name,
-            pin: encryptData(pin),
-            role: role
-        });
-
-        alert(`Member "${name}" Registered Successfully!`);
-        document.getElementById("newMemberName").value = "";
-        document.getElementById("newMemberPin").value = "";
+        const { error } = await supabaseClient.from('users').insert([{ name, pin, role }]);
+        if (error) {
+            alert("Error: User already exists or database issue!");
+        } else {
+            alert(`Member "${name}" Registered Successfully!`);
+            document.getElementById("newMemberName").value = "";
+            document.getElementById("newMemberPin").value = "";
+            loadUsers();
+        }
     }
 
     function lockOwnerPanel() {
@@ -283,30 +260,38 @@
         document.getElementById(viewId).classList.remove("hidden");
     }
 
-    // In-Browser Excel Generation (Auto Absent & Incomplete Tracking)
-    function generateExcelDataset(targetMember = null) {
-        const members = Object.values(localUsers)
+    // Excel Export Logic
+    async function fetchAttendanceRecords(targetMember = null) {
+        let query = supabaseClient.from('attendance').select('*').order('raw_ts', { ascending: true });
+        if (targetMember) query = query.eq('name', targetMember);
+        const { data } = await query;
+        return data || [];
+    }
+
+    async function generateExcelDataset(targetMember = null) {
+        const members = localUsers
             .filter(u => u.name !== "Shubham Agrawal SGM" && u.role !== "Owner" && (!targetMember || u.name === targetMember))
             .map(u => u.name);
 
-        if (localAttendance.length === 0) {
+        const logs = await fetchAttendanceRecords(targetMember);
+        if (logs.length === 0) {
             alert("No attendance records found yet to export.");
             return null;
         }
 
-        const dates = localAttendance.map(a => new Date(a.date));
+        const dates = logs.map(a => new Date(a.attendance_date));
         const minDate = new Date(Math.min(...dates));
         const maxDate = new Date(Math.max(...dates));
 
         const dailyMap = {};
-        localAttendance.forEach(a => {
-            const k = `${a.name}_${a.date}`;
+        logs.forEach(a => {
+            const k = `${a.name}_${a.attendance_date}`;
             if (!dailyMap[k]) dailyMap[k] = { in: null, out: null, rawIn: null, rawOut: null };
             if (a.action === "Check In" && !dailyMap[k].in) {
-                dailyMap[k].in = a.time;
+                dailyMap[k].in = a.attendance_time;
                 dailyMap[k].rawIn = new Date(a.raw_ts);
             } else if (a.action === "Check Out") {
-                dailyMap[k].out = a.time;
+                dailyMap[k].out = a.attendance_time;
                 dailyMap[k].rawOut = new Date(a.raw_ts);
             }
         });
@@ -355,8 +340,8 @@
         return rows;
     }
 
-    function exportCompleteExcel() {
-        const rows = generateExcelDataset();
+    async function exportCompleteExcel() {
+        const rows = await generateExcelDataset();
         if (!rows) return;
         const ws = XLSX.utils.aoa_to_sheet(rows);
         const wb = XLSX.utils.book_new();
@@ -364,18 +349,20 @@
         XLSX.writeFile(wb, "SGMEA_Complete_Attendance.xlsx");
     }
 
-    function exportIndividualExcel() {
-        const candidateMembers = Object.values(localUsers).filter(u => u.name !== "Shubham Agrawal SGM" && u.role !== "Owner");
+    async function exportIndividualExcel() {
+        const candidateMembers = localUsers.filter(u => u.name !== "Shubham Agrawal SGM" && u.role !== "Owner");
         const defaultName = candidateMembers[0]?.name || "";
         const name = prompt("Enter Member Name for Individual Report:", defaultName);
         if (!name) return;
-        const rows = generateExcelDataset(name);
+        const rows = await generateExcelDataset(name);
         if (!rows) return;
         const ws = XLSX.utils.aoa_to_sheet(rows);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, `${name}_Report`);
         XLSX.writeFile(wb, `${name}_Attendance_Report.xlsx`);
     }
+
+    window.onload = loadUsers;
 </script>
 
 </body>
