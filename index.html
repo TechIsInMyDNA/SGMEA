@@ -91,10 +91,10 @@
 
 <script>
     // ----------------------------------------------------
-    // SUPABASE CONFIGURATION (Project: ecadhrnxjutgdkctjipu)
+    // EXACT INTEGRATED SUPABASE CREDENTIALS
     // ----------------------------------------------------
-    const SUPABASE_URL = "https://ecadhrnxjutgdkctjipu.supabase.co";
-    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVjYWRobnJ4anV0Z2RrY2xqaXB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDQwNjEsImV4cCI6MjA5ODEyMDA2MX0.nQn7RfbQvtlq3_GBZzEOAN_DP4-CD0VmJFQVycaFwVg"; // Paste your exact anon key here
+    const SUPABASE_URL = "https://ecadhrnxjutgdkcljipu.supabase.co";
+    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVjYWRobnJ4anV0Z2RrY2xqaXB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDQwNjEsImV4cCI6MjA5ODEyMDA2MX0.nQn7RfbQvtlq3_GBZzEOAN_DP4-CD0VmJFQVycaFwVg";
 
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -175,7 +175,7 @@
         }
 
         const foundUser = localUsers.find(u => u.name === name);
-        if (!foundUser || foundUser.pin !== pin) {
+        if (!foundUser || String(foundUser.pin) !== pin) {
             alert("Authentication Failed: Invalid PIN!");
             return;
         }
