@@ -7,6 +7,9 @@
     
     <!-- SheetJS for Client-Side Excel Generation -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    
+    <!-- Supabase JS SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
@@ -87,15 +90,10 @@
 </div>
 
 <script>
-    const SUPABASE_BASE_URL = "https://ecadhrnxjutgdkcljipu.supabase.co/rest/v1";
+    const SUPABASE_URL = "https://ecadhrnxjutgdkcljipu.supabase.co";
     const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVjYWRobnJ4anV0Z2RrY2xqaXB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDQwNjEsImV4cCI6MjA5ODEyMDA2MX0.nQn7RfbQvtlq3_GBZzEOAN_DP4-CD0VmJFQVycaFwVg";
 
-    const HEADERS = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": "Bearer " + SUPABASE_KEY,
-        "Content-Type": "application/json",
-        "Prefer": "return=minimal"
-    };
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     const SHOP_LAT = 21.458439;
     const SHOP_LON = 80.194910;
@@ -103,8 +101,7 @@
 
     let localUsers = [
         { name: "Gaurav", pin: "1234", role: "Employee" },
-        { name: "Arshi", pin: "5678", role: "Employee" },
-        { name: "Shubham Agrawal SGM", pin: "1441", role: "Owner" }
+        { name: "Arshi", pin: "5678", role: "Employee" }
     ];
 
     function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -121,19 +118,14 @@
         renderUserDropdown();
         renderAdminList();
         try {
-            const res = await fetch(`${SUPABASE_BASE_URL}/users?select=*&order=name.asc`, {
-                headers: { "apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY }
-            });
-            if (res.ok) {
-                const data = await res.json();
-                if (data && data.length > 0) {
-                    localUsers = data;
-                    renderUserDropdown();
-                    renderAdminList();
-                }
+            const { data, error } = await supabase.from('users').select('*').order('name', { ascending: true });
+            if (!error && data && data.length > 0) {
+                localUsers = data;
+                renderUserDropdown();
+                renderAdminList();
             }
         } catch (e) {
-            console.warn("Using local fallback users");
+            console.log("Using default fallback users list");
         }
     }
 
@@ -202,29 +194,22 @@
                 const todayDate = `${yyyy}-${mm}-${dd}`;
                 const timeStr = now.toLocaleTimeString('en-US', { hour12: true });
 
-                try {
-                    const postRes = await fetch(`${SUPABASE_BASE_URL}/attendance`, {
-                        method: "POST",
-                        headers: HEADERS,
-                        body: JSON.stringify([{
-                            name: name,
-                            action: action,
-                            attendance_date: todayDate,
-                            attendance_time: timeStr,
-                            raw_ts: now.toISOString()
-                        }])
-                    });
-
-                    if (postRes.ok) {
-                        alert(`✅ ${name}\n\n${action} Marked Successfully!`);
-                        document.getElementById("pinInput").value = "";
-                        document.getElementById("statusMsg").innerText = "✅ Attendance Recorded Live";
-                    } else {
-                        const errTxt = await postRes.text();
-                        alert("Database Save Error: " + errTxt);
+                const { error } = await supabase.from('attendance').insert([
+                    {
+                        name: name,
+                        action: action,
+                        attendance_date: todayDate,
+                        attendance_time: timeStr,
+                        raw_ts: now.toISOString()
                     }
-                } catch (err) {
-                    alert("Network Error: " + err.message);
+                ]);
+
+                if (error) {
+                    alert("Supabase Save Error: " + error.message);
+                } else {
+                    alert(`✅ ${name}\n\n${action} Marked Successfully!`);
+                    document.getElementById("pinInput").value = "";
+                    document.getElementById("statusMsg").innerText = "✅ Attendance Recorded Live";
                 }
             },
             () => {
@@ -255,23 +240,14 @@
             return;
         }
 
-        try {
-            const res = await fetch(`${SUPABASE_BASE_URL}/users`, {
-                method: "POST",
-                headers: HEADERS,
-                body: JSON.stringify([{ name, pin, role }])
-            });
-            if (res.ok) {
-                alert(`Member "${name}" Registered Successfully!`);
-                document.getElementById("newMemberName").value = "";
-                document.getElementById("newMemberPin").value = "";
-                loadUsers();
-            } else {
-                const errTxt = await res.text();
-                alert("Registration Error: " + errTxt);
-            }
-        } catch (e) {
-            alert("Network error while adding member.");
+        const { error } = await supabase.from('users').insert([{ name, pin, role }]);
+        if (error) {
+            alert("Database Error: " + error.message);
+        } else {
+            alert(`Member "${name}" Registered Successfully!`);
+            document.getElementById("newMemberName").value = "";
+            document.getElementById("newMemberPin").value = "";
+            loadUsers();
         }
     }
 
@@ -301,94 +277,84 @@
     }
 
     async function generateExcelDataset(targetMember = null) {
-        try {
-            let url = `${SUPABASE_BASE_URL}/attendance?select=*&order=attendance_date.asc`;
-            if (targetMember) url += `&name=eq.${encodeURIComponent(targetMember)}`;
-
-            const res = await fetch(url, {
-                headers: { "apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY }
-            });
-
-            if (!res.ok) {
-                const errTxt = await res.text();
-                alert("Fetch Error: " + errTxt);
-                return null;
-            }
-
-            const logs = await res.json();
-            if (!logs || logs.length === 0) {
-                alert("Database mein abhi tak koi attendance records nahi hain!");
-                return null;
-            }
-
-            const members = targetMember ? [targetMember] : localUsers
-                .filter(u => u.name !== "Shubham Agrawal SGM" && u.role !== "Owner")
-                .map(u => u.name);
-
-            const dateStrings = [...new Set(logs.map(a => a.attendance_date))].sort();
-            const minDate = new Date(dateStrings[0]);
-            const maxDate = new Date(dateStrings[dateStrings.length - 1]);
-
-            const dailyMap = {};
-            logs.forEach(a => {
-                const k = `${a.name}_${a.attendance_date}`;
-                if (!dailyMap[k]) dailyMap[k] = { in: null, out: null };
-                if (a.action === "Check In" && !dailyMap[k].in) {
-                    dailyMap[k].in = a.attendance_time;
-                } else if (a.action === "Check Out") {
-                    dailyMap[k].out = a.attendance_time;
-                }
-            });
-
-            const rows = [["Sr No", "Member Name", "Date", "Day", "Check In Time", "Check Out Time", "Status / Spent Time"]];
-            let sr = 1;
-            let curr = new Date(minDate);
-
-            while (curr <= maxDate) {
-                const yyyy = curr.getFullYear();
-                const mm = String(curr.getMonth() + 1).padStart(2, '0');
-                const dd = String(curr.getDate()).padStart(2, '0');
-                const dateKey = `${yyyy}-${mm}-${dd}`;
-                const displayDate = `${dd}-${mm}-${yyyy}`;
-                const dayStr = curr.toLocaleDateString('en-US', { weekday: 'long' });
-
-                members.forEach(member => {
-                    const k = `${member}_${dateKey}`;
-                    const data = dailyMap[k] || { in: null, out: null };
-
-                    let inStr = data.in || "Absent";
-                    let outStr = data.out || "Absent";
-                    let statusStr = "Absent";
-
-                    if (data.in && data.out) {
-                        inStr = data.in;
-                        outStr = data.out;
-                        const diffSec = parseTimeString(data.out) - parseTimeString(data.in);
-                        if (diffSec > 0) {
-                            const totalMins = Math.floor(diffSec / 60);
-                            const hrs = Math.floor(totalMins / 60);
-                            const mins = totalMins % 60;
-                            statusStr = `Present (${hrs}h ${mins}m)`;
-                        } else {
-                            statusStr = "Present";
-                        }
-                    } else if (data.in || data.out) {
-                        inStr = data.in ? data.in : "Missed In";
-                        outStr = data.out ? data.out : "Missed Out";
-                        statusStr = "Incomplete Punch";
-                    }
-
-                    rows.push([sr++, member, displayDate, dayStr, inStr, outStr, statusStr]);
-                });
-
-                curr.setDate(curr.getDate() + 1);
-            }
-
-            return rows;
-        } catch (err) {
-            alert("Error: " + err.message);
+        let query = supabase.from('attendance').select('*').order('attendance_date', { ascending: true });
+        if (targetMember) query = query.eq('name', targetMember);
+        
+        const { data: logs, error } = await query;
+        if (error) {
+            alert("Fetch Error: " + error.message);
             return null;
         }
+
+        if (!logs || logs.length === 0) {
+            alert("Database me abhi tak koi attendance entry nahi hai. Pehle ek Check In/Check Out punch karein!");
+            return null;
+        }
+
+        const members = targetMember ? [targetMember] : localUsers
+            .filter(u => u.name !== "Shubham Agrawal SGM" && u.role !== "Owner")
+            .map(u => u.name);
+
+        const dateStrings = [...new Set(logs.map(a => a.attendance_date))].sort();
+        const minDate = new Date(dateStrings[0]);
+        const maxDate = new Date(dateStrings[dateStrings.length - 1]);
+
+        const dailyMap = {};
+        logs.forEach(a => {
+            const k = `${a.name}_${a.attendance_date}`;
+            if (!dailyMap[k]) dailyMap[k] = { in: null, out: null };
+            if (a.action === "Check In" && !dailyMap[k].in) {
+                dailyMap[k].in = a.attendance_time;
+            } else if (a.action === "Check Out") {
+                dailyMap[k].out = a.attendance_time;
+            }
+        });
+
+        const rows = [["Sr No", "Member Name", "Date", "Day", "Check In Time", "Check Out Time", "Status / Spent Time"]];
+        let sr = 1;
+        let curr = new Date(minDate);
+
+        while (curr <= maxDate) {
+            const yyyy = curr.getFullYear();
+            const mm = String(curr.getMonth() + 1).padStart(2, '0');
+            const dd = String(curr.getDate()).padStart(2, '0');
+            const dateKey = `${yyyy}-${mm}-${dd}`;
+            const displayDate = `${dd}-${mm}-${yyyy}`;
+            const dayStr = curr.toLocaleDateString('en-US', { weekday: 'long' });
+
+            members.forEach(member => {
+                const k = `${member}_${dateKey}`;
+                const data = dailyMap[k] || { in: null, out: null };
+
+                let inStr = data.in || "Absent";
+                let outStr = data.out || "Absent";
+                let statusStr = "Absent";
+
+                if (data.in && data.out) {
+                    inStr = data.in;
+                    outStr = data.out;
+                    const diffSec = parseTimeString(data.out) - parseTimeString(data.in);
+                    if (diffSec > 0) {
+                        const totalMins = Math.floor(diffSec / 60);
+                        const hrs = Math.floor(totalMins / 60);
+                        const mins = totalMins % 60;
+                        statusStr = `Present (${hrs}h ${mins}m)`;
+                    } else {
+                        statusStr = "Present";
+                    }
+                } else if (data.in || data.out) {
+                    inStr = data.in ? data.in : "Missed In";
+                    outStr = data.out ? data.out : "Missed Out";
+                    statusStr = "Incomplete Punch";
+                }
+
+                rows.push([sr++, member, displayDate, dayStr, inStr, outStr, statusStr]);
+            });
+
+            curr.setDate(curr.getDate() + 1);
+        }
+
+        return rows;
     }
 
     async function exportCompleteExcel() {
