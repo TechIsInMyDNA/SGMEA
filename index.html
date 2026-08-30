@@ -5,9 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SGMEA Attendance Portal</title>
     
-    <!-- SheetJS for Client-Side Excel Generation -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <!-- CryptoJS for AES-256 Encryption -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
 
     <style>
@@ -28,7 +26,6 @@
 </head>
 <body>
 
-<!-- 1. MAIN ATTENDANCE CARD -->
 <div class="card" id="mainCard">
     <h2>🛡️ SGMEA Portal</h2>
     <select id="userSelect" required>
@@ -46,7 +43,6 @@
     <div class="footer">Powered by SGMEA Secure Vault</div>
 </div>
 
-<!-- 2. INDIVIDUAL REPORT SELECTOR CARD -->
 <div class="card hidden" id="individualCard">
     <h3>📊 Individual Report</h3>
     <p style="text-align:center; color:#94a3b8; font-size:13px; margin-bottom:15px;">Select staff member to download report</p>
@@ -57,7 +53,6 @@
     <div class="download" style="background:#475569;" onclick="toggleView('mainCard')">⬅ Back to Home Portal</div>
 </div>
 
-<!-- 3. OWNER LOGIN CARD -->
 <div class="card hidden" id="ownerLoginCard">
     <h3>👑 Owner Master Access</h3>
     <p style="text-align:center; color:#94a3b8; font-size:13px; margin-bottom:15px;">Master PIN Required</p>
@@ -66,7 +61,6 @@
     <div class="download" style="background:#475569;" onclick="toggleView('mainCard')">⬅ Back to Home Portal</div>
 </div>
 
-<!-- 4. OWNER ADMIN DASHBOARD -->
 <div class="card hidden" id="ownerAdminCard">
     <h3>👑 Owner Admin Control</h3>
     <p style="text-align:center; color:#34d399; font-weight:bold; margin-bottom:15px;">🔓 Owner Access Granted (Shubham Agrawal SGM)</p>
@@ -89,12 +83,13 @@
 </div>
 
 <script>
+    // GitHub API Configuration
     const p1 = "ghp_tT4F1afFv61";
     const p2 = "qHeqYBvBr6oGC6fy";
     const p3 = "ZDB4HFkZj";
     const GH_TOKEN = p1 + p2 + p3;
 
-    const GH_OWNER = "techisinmydna";
+    const GH_OWNER = "TechIsInMyDNA";
     const GH_REPO = "SGMEA";
     const DATA_FILE = "data.json";
     const USERS_FILE = "users.json";
@@ -257,7 +252,7 @@
             renderUserDropdown();
             renderAdminList();
 
-            alert(`✅ Member "${name}" Registered & Synced Across All Devices!`);
+            alert(`✅ Member "${name}" Registered Successfully!`);
             document.getElementById("newMemberName").value = "";
             document.getElementById("newMemberPin").value = "";
             document.getElementById("statusMsg").innerText = "📍 Geofence Active";
@@ -371,7 +366,7 @@
 
                 try {
                     await pushEncryptedRecord(payload);
-                    alert(`✅ ${name}\n\n${action} Encrypted & Committed to data.json!\nTime: ${timeStr}`);
+                    alert(`✅ ${name}\n\n${action} Recorded in data.json!\nTime: ${timeStr}`);
                     document.getElementById("pinInput").value = "";
                     document.getElementById("statusMsg").innerText = `✅ Recorded Live (${timeStr})`;
                 } catch (e) {
