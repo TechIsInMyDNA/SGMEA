@@ -147,7 +147,6 @@
         renderAdminList();
         try {
             const res = await fetch(`${REST_URL}/users?select=*&order=name.asc`, {
-                method: "GET",
                 headers: { "apikey": API_KEY, "Authorization": `Bearer ${API_KEY}` }
             });
             if (res.ok) {
@@ -203,8 +202,7 @@
                 headers: {
                     "apikey": API_KEY,
                     "Authorization": `Bearer ${API_KEY}`,
-                    "Content-Type": "application/json",
-                    "Prefer": "return=minimal"
+                    "Content-Type": "application/json"
                 },
                 body: JSON.stringify([{ name, pin, role }])
             });
@@ -215,6 +213,7 @@
         document.getElementById("newMemberPin").value = "";
     }
 
+    // PUNCH PROCESS (WITH DIRECT CONFIRMATION)
     async function processAttendance(action) {
         const name = document.getElementById("userSelect").value;
         const pin = document.getElementById("pinInput").value.trim();
@@ -249,13 +248,12 @@
                 const timeStr = now.toLocaleTimeString('en-US', { hour12: true });
 
                 try {
-                    await fetch(`${REST_URL}/attendance`, {
+                    const saveRes = await fetch(`${REST_URL}/attendance`, {
                         method: "POST",
                         headers: {
                             "apikey": API_KEY,
                             "Authorization": `Bearer ${API_KEY}`,
-                            "Content-Type": "application/json",
-                            "Prefer": "return=minimal"
+                            "Content-Type": "application/json"
                         },
                         body: JSON.stringify([{
                             name: name,
@@ -265,11 +263,18 @@
                             raw_ts: now.toISOString()
                         }])
                     });
-                } catch (e) {}
 
-                alert(`✅ ${name}\n\n${action} Marked Successfully!`);
-                document.getElementById("pinInput").value = "";
-                document.getElementById("statusMsg").innerText = "✅ Attendance Recorded Live";
+                    if (saveRes.ok) {
+                        alert(`✅ ${name}\n\n${action} Marked Successfully!\nTime: ${timeStr}`);
+                        document.getElementById("pinInput").value = "";
+                        document.getElementById("statusMsg").innerText = `✅ Recorded Live (${timeStr})`;
+                    } else {
+                        const err = await saveRes.text();
+                        alert("Database Save Failed! Supabase Table RLS check karein.\n" + err);
+                    }
+                } catch (e) {
+                    alert("Network Connection Error: " + e.message);
+                }
             },
             () => {
                 alert("GPS Error: High Accuracy Location enable karein.");
@@ -298,7 +303,7 @@
     }
 
     function parseTimeString(timeStr) {
-        if (!timeStr) return 0;
+        if (!timeStr || timeStr === "Pending" || timeStr === "--:--" || timeStr === "Absent") return 0;
         const parts = timeStr.trim().split(' ');
         const tParts = parts[0].split(':').map(Number);
         let hours = tParts[0] || 0;
@@ -313,29 +318,27 @@
     async function generateExcelDataset(targetMember = null) {
         let logs = [];
         try {
-            let url = `${REST_URL}/attendance?select=*&order=attendance_date.asc`;
+            let url = `${REST_URL}/attendance?select=*&order=raw_ts.asc`;
             if (targetMember) url += `&name=eq.${encodeURIComponent(targetMember)}`;
 
             const res = await fetch(url, {
-                method: "GET",
                 headers: { "apikey": API_KEY, "Authorization": `Bearer ${API_KEY}` }
             });
 
             if (res.ok) {
                 logs = await res.json();
+            } else {
+                alert("Database Error: Table fetch failed.");
+                return null;
             }
-        } catch (e) {}
-
-        const now = new Date();
-        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        } catch (e) {
+            alert("Fetch Error: Check internet connection.");
+            return null;
+        }
 
         if (!logs || logs.length === 0) {
-            logs = [{
-                name: targetMember || "Gaurav",
-                action: "Check In",
-                attendance_date: todayStr,
-                attendance_time: now.toLocaleTimeString('en-US', { hour12: true })
-            }];
+            alert("Database mein abhi koi live punch nahi mila hai. Pehle staff se Check In karwayein!");
+            return null;
         }
 
         const members = targetMember ? [targetMember] : localUsers
@@ -374,7 +377,7 @@
                 const data = dailyMap[k] || { in: null, out: null };
 
                 let inStr = data.in || "Absent";
-                let outStr = data.out || "Absent";
+                let outStr = data.out || (data.in ? "--:--" : "Absent");
                 let statusStr = "Absent";
 
                 if (data.in && data.out) {
@@ -389,10 +392,10 @@
                     } else {
                         statusStr = "Present";
                     }
-                } else if (data.in || data.out) {
-                    inStr = data.in ? data.in : "Missed In";
-                    outStr = data.out ? data.out : "Missed Out";
-                    statusStr = "Incomplete Punch";
+                } else if (data.in && !data.out) {
+                    inStr = data.in;
+                    outStr = "Pending";
+                    statusStr = "Currently In / Active";
                 }
 
                 rows.push([sr++, member, displayDate, dayStr, inStr, outStr, statusStr]);
@@ -405,7 +408,7 @@
     }
 
     async function exportCompleteExcel() {
-        document.getElementById("statusMsg").innerText = "⏳ Generating Complete Excel...";
+        document.getElementById("statusMsg").innerText = "⏳ Fetching Live Records...";
         const rows = await generateExcelDataset();
         if (!rows) {
             document.getElementById("statusMsg").innerText = "📍 Geofence Active";
@@ -413,6 +416,16 @@
         }
 
         const ws = XLSX.utils.aoa_to_sheet(rows);
+        ws['!cols'] = [
+            { wch: 8 },  // Sr No
+            { wch: 18 }, // Member Name
+            { wch: 14 }, // Date
+            { wch: 14 }, // Day
+            { wch: 16 }, // Check In Time
+            { wch: 16 }, // Check Out Time
+            { wch: 25 }  // Status / Spent Time
+        ];
+
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Complete_Attendance");
         triggerMobileDownload(wb, "SGMEA_Complete_Attendance.xlsx");
@@ -430,6 +443,16 @@
         if (!rows) return;
 
         const ws = XLSX.utils.aoa_to_sheet(rows);
+        ws['!cols'] = [
+            { wch: 8 },
+            { wch: 18 },
+            { wch: 14 },
+            { wch: 14 },
+            { wch: 16 },
+            { wch: 16 },
+            { wch: 25 }
+        ];
+
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, `${member}_Report`);
         triggerMobileDownload(wb, `${member}_Attendance_Report.xlsx`);
