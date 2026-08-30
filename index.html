@@ -7,9 +7,6 @@
     
     <!-- SheetJS for Client-Side Excel Generation -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    
-    <!-- Official Supabase JS SDK (v2) -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
@@ -90,17 +87,12 @@
 </div>
 
 <script>
-    // ----------------------------------------------------
-    // SUPABASE OFFICIAL CLIENT INITIALIZATION
-    // ----------------------------------------------------
-    const SUPABASE_URL = "https://ecadhrnxjutgdkcljipu.supabase.co";
-    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVjYWRobnJ4anV0Z2RrY2xqaXB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDQwNjEsImV4cCI6MjA5ODEyMDA2MX0.nQn7RfbQvtlq3_GBZzEOAN_DP4-CD0VmJFQVycaFwVg";
-
-    const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const REST_URL = "https://ecadhrnxjutgdkcljipu.supabase.co/rest/v1";
+    const API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVjYWRobnJ4anV0Z2RrY2xqaXB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDQwNjEsImV4cCI6MjA5ODEyMDA2MX0.nQn7RfbQvtlq3_GBZzEOAN_DP4-CD0VmJFQVycaFwVg";
 
     const SHOP_LAT = 21.458439;
     const SHOP_LON = 80.194910;
-    const ALLOWED_RADIUS = 1800; // 1.8 KM safe window
+    const ALLOWED_RADIUS = 1800;
 
     let localUsers = [
         { name: "Gaurav", pin: "1234", role: "Employee" },
@@ -154,11 +146,16 @@
         renderUserDropdown();
         renderAdminList();
         try {
-            const { data, error } = await db.from('users').select('*').order('name', { ascending: true });
-            if (!error && data && data.length > 0) {
-                localUsers = data;
-                renderUserDropdown();
-                renderAdminList();
+            const res = await fetch(`${REST_URL}/users?select=*&order=name.asc`, {
+                headers: { "apikey": API_KEY, "Authorization": `Bearer ${API_KEY}` }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (data && data.length > 0) {
+                    localUsers = data;
+                    renderUserDropdown();
+                    renderAdminList();
+                }
             }
         } catch (e) {}
     }
@@ -200,7 +197,15 @@
         renderAdminList();
 
         try {
-            await db.from('users').insert([{ name, pin, role }]);
+            fetch(`${REST_URL}/users`, {
+                method: "POST",
+                headers: {
+                    "apikey": API_KEY,
+                    "Authorization": `Bearer ${API_KEY}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify([{ name, pin, role }])
+            }).catch(() => {});
         } catch (e) {}
 
         alert(`Member "${name}" Registered Successfully!`);
@@ -208,7 +213,6 @@
         document.getElementById("newMemberPin").value = "";
     }
 
-    // LIVE PUNCH RECORDING
     async function processAttendance(action) {
         const name = document.getElementById("userSelect").value;
         const pin = document.getElementById("pinInput").value.trim();
@@ -242,23 +246,35 @@
                 const todayDate = `${yyyy}-${mm}-${dd}`;
                 const timeStr = now.toLocaleTimeString('en-US', { hour12: true });
 
-                const { error } = await db.from('attendance').insert([
-                    {
-                        name: name,
-                        action: action,
-                        attendance_date: todayDate,
-                        attendance_time: timeStr,
-                        raw_ts: now.toISOString()
-                    }
-                ]);
+                const newRec = {
+                    name: name,
+                    action: action,
+                    attendance_date: todayDate,
+                    attendance_time: timeStr,
+                    raw_ts: now.toISOString()
+                };
 
-                if (error) {
-                    alert("Database Save Error: " + error.message);
-                } else {
-                    alert(`✅ ${name}\n\n${action} Marked Successfully!\nTime: ${timeStr}`);
-                    document.getElementById("pinInput").value = "";
-                    document.getElementById("statusMsg").innerText = `✅ Recorded Live (${timeStr})`;
-                }
+                // Local Cache Update
+                let cached = JSON.parse(localStorage.getItem("sgmea_attendance_cache") || "[]");
+                cached.push(newRec);
+                localStorage.setItem("sgmea_attendance_cache", JSON.stringify(cached));
+
+                // Cloud Sync
+                try {
+                    fetch(`${REST_URL}/attendance`, {
+                        method: "POST",
+                        headers: {
+                            "apikey": API_KEY,
+                            "Authorization": `Bearer ${API_KEY}`,
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify([newRec])
+                    }).catch(() => {});
+                } catch (e) {}
+
+                alert(`✅ ${name}\n\n${action} Marked Successfully!\nTime: ${timeStr}`);
+                document.getElementById("pinInput").value = "";
+                document.getElementById("statusMsg").innerText = `✅ Recorded Live (${timeStr})`;
             },
             () => {
                 alert("GPS Error: High Accuracy Location enable karein.");
@@ -300,18 +316,32 @@
     }
 
     async function generateExcelDataset(targetMember = null) {
-        let query = db.from('attendance').select('*').order('raw_ts', { ascending: true });
-        if (targetMember) query = query.eq('name', targetMember);
+        let logs = [];
+        try {
+            let url = `${REST_URL}/attendance?select=*&order=raw_ts.asc`;
+            if (targetMember) url += `&name=eq.${encodeURIComponent(targetMember)}`;
 
-        const { data: logs, error } = await query;
+            const res = await fetch(url, {
+                headers: { "apikey": API_KEY, "Authorization": `Bearer ${API_KEY}` }
+            });
 
-        if (error) {
-            alert("Database Fetch Error: " + error.message);
-            return null;
-        }
+            if (res.ok) {
+                logs = await res.json();
+            }
+        } catch (e) {}
+
+        // Combine with Local Cache if Network Failed
+        const cached = JSON.parse(localStorage.getItem("sgmea_attendance_cache") || "[]");
+        cached.forEach(c => {
+            if (!logs.some(l => l.name === c.name && l.attendance_date === c.attendance_date && l.action === c.action)) {
+                if (!targetMember || c.name === targetMember) {
+                    logs.push(c);
+                }
+            }
+        });
 
         if (!logs || logs.length === 0) {
-            alert("Database mein abhi tak koi attendance punch record nahi hua hai!");
+            alert("Database mein abhi koi live punch nahi mila hai. Pehle staff se Check In karwayein!");
             return null;
         }
 
@@ -382,7 +412,7 @@
     }
 
     async function exportCompleteExcel() {
-        document.getElementById("statusMsg").innerText = "⏳ Fetching Live Records...";
+        document.getElementById("statusMsg").innerText = "⏳ Generating Excel...";
         const rows = await generateExcelDataset();
         if (!rows) {
             document.getElementById("statusMsg").innerText = "📍 Geofence Active";
