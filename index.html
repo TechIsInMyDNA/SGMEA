@@ -42,7 +42,7 @@
     <div class="download" style="background:#475569;" onclick="toggleView('individualCard')">📊 Individual Member Report</div>
     <div class="owner-btn" onclick="toggleView('ownerLoginCard')">👑 Owner Control (Shubham Agrawal SGM)</div>
 
-    <div class="status-box" id="statusMsg">📍 Geofence Active (1.8 KM)</div>
+    <div class="status-box" id="statusMsg">📍 Geofence Active</div>
     <div class="footer">Powered by SGMEA Secure Vault</div>
 </div>
 
@@ -193,9 +193,6 @@
         document.getElementById("newMemberPin").value = "";
     }
 
-    // ----------------------------------------------------
-    // ROBUST GITHUB API FILE HANDLERS
-    // ----------------------------------------------------
     function utf8_to_b64(str) {
         return window.btoa(unescape(encodeURIComponent(str)));
     }
@@ -205,7 +202,6 @@
     }
 
     async function fetchEncryptedData() {
-        // Cache-busting URL parameter
         const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${DATA_FILE}?t=${Date.now()}`;
         const res = await fetch(url, {
             headers: {
@@ -247,7 +243,6 @@
     async function pushEncryptedRecord(record) {
         const { sha, rawArray } = await fetchEncryptedData();
         
-        // Encrypt with AES-256
         const cipherText = CryptoJS.AES.encrypt(JSON.stringify(record), AES_SECRET).toString();
         rawArray.push(cipherText);
 
@@ -453,7 +448,7 @@
         document.getElementById("statusMsg").innerText = "⏳ Decrypting & Generating Excel...";
         const rows = await generateExcelDataset();
         if (!rows) {
-            document.getElementById("statusMsg").innerText = "📍 Geofence Active (1.8 KM)";
+            document.getElementById("statusMsg").innerText = "📍 Geofence Active";
             return;
         }
 
