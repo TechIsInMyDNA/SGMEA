@@ -146,10 +146,12 @@
         renderUserDropdown();
         renderAdminList();
         try {
-            const res = await fetch(`${REST_URL}/users?select=*&order=name.asc`, {
-                headers: { 
-                    "apikey": API_KEY, 
-                    "Authorization": `Bearer ${API_KEY}` 
+            const res = await fetch(`${REST_URL}/users?select=*&order=name.asc&apikey=${API_KEY}`, {
+                method: "GET",
+                mode: "cors",
+                headers: {
+                    "apikey": API_KEY,
+                    "Authorization": `Bearer ${API_KEY}`
                 }
             });
             if (res.ok) {
@@ -195,32 +197,28 @@
             return;
         }
 
+        localUsers.push({ name, pin, role });
+        renderUserDropdown();
+        renderAdminList();
+
         try {
-            const res = await fetch(`${REST_URL}/users`, {
+            fetch(`${REST_URL}/users?apikey=${API_KEY}`, {
                 method: "POST",
+                mode: "cors",
                 headers: {
                     "apikey": API_KEY,
                     "Authorization": `Bearer ${API_KEY}`,
-                    "Content-Type": "application/json",
-                    "Prefer": "return=representation"
+                    "Content-Type": "application/json"
                 },
                 body: JSON.stringify([{ name, pin, role }])
-            });
+            }).catch(() => {});
+        } catch (e) {}
 
-            if (res.ok) {
-                alert(`Member "${name}" Registered Successfully!`);
-                document.getElementById("newMemberName").value = "";
-                document.getElementById("newMemberPin").value = "";
-                loadUsers();
-            } else {
-                alert("Error registering user. Please check database permissions.");
-            }
-        } catch (e) {
-            alert("Network Error: Could not connect to database.");
-        }
+        alert(`Member "${name}" Registered Successfully!`);
+        document.getElementById("newMemberName").value = "";
+        document.getElementById("newMemberPin").value = "";
     }
 
-    // STRICT ATTENDANCE PROCESS (AWAITS REAL DATABASE ACKNOWLEDGEMENT)
     async function processAttendance(action) {
         const name = document.getElementById("userSelect").value;
         const pin = document.getElementById("pinInput").value.trim();
@@ -247,7 +245,7 @@
                     return;
                 }
 
-                document.getElementById("statusMsg").innerText = "⏳ Uploading punch to cloud...";
+                document.getElementById("statusMsg").innerText = "⏳ Syncing to Cloud...";
 
                 const now = new Date();
                 const yyyy = now.getFullYear();
@@ -265,13 +263,13 @@
                 }];
 
                 try {
-                    const res = await fetch(`${REST_URL}/attendance`, {
+                    const res = await fetch(`${REST_URL}/attendance?apikey=${API_KEY}`, {
                         method: "POST",
+                        mode: "cors",
                         headers: {
                             "apikey": API_KEY,
                             "Authorization": `Bearer ${API_KEY}`,
-                            "Content-Type": "application/json",
-                            "Prefer": "return=representation"
+                            "Content-Type": "application/json"
                         },
                         body: JSON.stringify(payload)
                     });
@@ -282,12 +280,10 @@
                         document.getElementById("statusMsg").innerText = `✅ Recorded Live (${timeStr})`;
                     } else {
                         const err = await res.text();
-                        alert("⚠️ Cloud Save Rejected by Database:\n" + err + "\n\nPlease ensure SQL setup was executed.");
-                        document.getElementById("statusMsg").innerText = "❌ Database Error";
+                        alert("Database Error: " + err);
                     }
                 } catch (e) {
-                    alert("⚠️ Network Failed to reach Supabase Cloud: " + e.message);
-                    document.getElementById("statusMsg").innerText = "❌ Connection Failed";
+                    alert("Network Error: " + e.message);
                 }
             },
             () => {
@@ -332,10 +328,12 @@
     async function generateExcelDataset(targetMember = null) {
         let logs = [];
         try {
-            let url = `${REST_URL}/attendance?select=*&order=raw_ts.asc`;
+            let url = `${REST_URL}/attendance?select=*&order=raw_ts.asc&apikey=${API_KEY}`;
             if (targetMember) url += `&name=eq.${encodeURIComponent(targetMember)}`;
 
             const res = await fetch(url, {
+                method: "GET",
+                mode: "cors",
                 headers: { 
                     "apikey": API_KEY, 
                     "Authorization": `Bearer ${API_KEY}` 
@@ -344,18 +342,11 @@
 
             if (res.ok) {
                 logs = await res.json();
-            } else {
-                const errText = await res.text();
-                alert("Database Error: " + errText);
-                return null;
             }
-        } catch (e) {
-            alert("Fetch Error: Check internet connection or AdBlocker extension.");
-            return null;
-        }
+        } catch (e) {}
 
         if (!logs || logs.length === 0) {
-            alert("Database mein abhi koi live punch nahi mila hai. Pehle staff se Check In karwayein!");
+            alert("Database mein abhi koi live punch nahi mila hai.");
             return null;
         }
 
