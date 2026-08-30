@@ -146,13 +146,8 @@
         renderUserDropdown();
         renderAdminList();
         try {
-            const res = await fetch(`${REST_URL}/users?select=*&order=name.asc&apikey=${API_KEY}`, {
-                method: "GET",
-                mode: "cors",
-                headers: {
-                    "apikey": API_KEY,
-                    "Authorization": `Bearer ${API_KEY}`
-                }
+            const res = await fetch(`${REST_URL}/users?select=*`, {
+                headers: { "apikey": API_KEY, "Authorization": `Bearer ${API_KEY}` }
             });
             if (res.ok) {
                 const data = await res.json();
@@ -202,16 +197,15 @@
         renderAdminList();
 
         try {
-            fetch(`${REST_URL}/users?apikey=${API_KEY}`, {
+            await fetch(`${REST_URL}/users`, {
                 method: "POST",
-                mode: "cors",
                 headers: {
                     "apikey": API_KEY,
                     "Authorization": `Bearer ${API_KEY}`,
                     "Content-Type": "application/json"
                 },
                 body: JSON.stringify([{ name, pin, role }])
-            }).catch(() => {});
+            });
         } catch (e) {}
 
         alert(`Member "${name}" Registered Successfully!`);
@@ -245,7 +239,7 @@
                     return;
                 }
 
-                document.getElementById("statusMsg").innerText = "⏳ Syncing to Cloud...";
+                document.getElementById("statusMsg").innerText = "⏳ Saving to Cloud Database...";
 
                 const now = new Date();
                 const yyyy = now.getFullYear();
@@ -263,24 +257,24 @@
                 }];
 
                 try {
-                    const res = await fetch(`${REST_URL}/attendance?apikey=${API_KEY}`, {
+                    const res = await fetch(`${REST_URL}/attendance`, {
                         method: "POST",
-                        mode: "cors",
                         headers: {
                             "apikey": API_KEY,
                             "Authorization": `Bearer ${API_KEY}`,
-                            "Content-Type": "application/json"
+                            "Content-Type": "application/json",
+                            "Prefer": "return=representation"
                         },
                         body: JSON.stringify(payload)
                     });
 
                     if (res.ok) {
-                        alert(`✅ ${name}\n\n${action} Marked Successfully!\nTime: ${timeStr}`);
+                        alert(`✅ ${name}\n\n${action} Recorded in Supabase Cloud!\nTime: ${timeStr}`);
                         document.getElementById("pinInput").value = "";
                         document.getElementById("statusMsg").innerText = `✅ Recorded Live (${timeStr})`;
                     } else {
                         const err = await res.text();
-                        alert("Database Error: " + err);
+                        alert("Database Rejection:\n" + err);
                     }
                 } catch (e) {
                     alert("Network Error: " + e.message);
@@ -328,12 +322,10 @@
     async function generateExcelDataset(targetMember = null) {
         let logs = [];
         try {
-            let url = `${REST_URL}/attendance?select=*&order=raw_ts.asc&apikey=${API_KEY}`;
+            let url = `${REST_URL}/attendance?select=*`;
             if (targetMember) url += `&name=eq.${encodeURIComponent(targetMember)}`;
 
             const res = await fetch(url, {
-                method: "GET",
-                mode: "cors",
                 headers: { 
                     "apikey": API_KEY, 
                     "Authorization": `Bearer ${API_KEY}` 
@@ -342,11 +334,18 @@
 
             if (res.ok) {
                 logs = await res.json();
+            } else {
+                const errText = await res.text();
+                alert("Database Fetch Error: " + errText);
+                return null;
             }
-        } catch (e) {}
+        } catch (e) {
+            alert("Network Error: " + e.message);
+            return null;
+        }
 
         if (!logs || logs.length === 0) {
-            alert("Database mein abhi koi live punch nahi mila hai.");
+            alert("Database mein abhi tak koi punch record nahi mila hai. Ek baar Check In karein!");
             return null;
         }
 
@@ -417,7 +416,7 @@
     }
 
     async function exportCompleteExcel() {
-        document.getElementById("statusMsg").innerText = "⏳ Generating Excel...";
+        document.getElementById("statusMsg").innerText = "⏳ Fetching Live Records...";
         const rows = await generateExcelDataset();
         if (!rows) {
             document.getElementById("statusMsg").innerText = "📍 Geofence Active";
