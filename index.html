@@ -89,7 +89,6 @@
 </div>
 
 <script>
-    // Token Assembly
     const p1 = "ghp_tT4F1afFv61";
     const p2 = "qHeqYBvBr6oGC6fy";
     const p3 = "ZDB4HFkZj";
@@ -98,6 +97,7 @@
     const GH_OWNER = "techisinmydna";
     const GH_REPO = "SGMEA";
     const DATA_FILE = "data.json";
+    const USERS_FILE = "users.json";
     const AES_SECRET = "SGMEA_SGM_AES256_SECURE_VAULT_1441";
 
     const SHOP_LAT = 21.458439;
@@ -120,6 +120,9 @@
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     }
 
+    function utf8_to_b64(str) { return window.btoa(unescape(encodeURIComponent(str))); }
+    function b64_to_utf8(str) { return decodeURIComponent(escape(window.atob(str))); }
+
     function renderUserDropdown() {
         const select = document.getElementById("userSelect");
         const indSelect = document.getElementById("individualUserSelect");
@@ -131,12 +134,12 @@
             if (u.name !== "Shubham Agrawal SGM" && u.role !== "Owner") {
                 const opt1 = document.createElement("option");
                 opt1.value = u.name;
-                opt1.textContent = u.name;
+                opt1.textContent = `${u.name} (${u.role || 'Staff'})`;
                 select.appendChild(opt1);
 
                 const opt2 = document.createElement("option");
                 opt2.value = u.name;
-                opt2.textContent = u.name;
+                opt2.textContent = `${u.name} (${u.role || 'Staff'})`;
                 indSelect.appendChild(opt2);
             }
         });
@@ -147,9 +150,30 @@
         tbl.innerHTML = "";
         localUsers.forEach(u => {
             const tr = document.createElement("tr");
-            tr.innerHTML = `<td style='padding:6px; border-bottom:1px solid #1e293b;'>${u.name} (${u.role})</td>`;
+            tr.innerHTML = `<td style='padding:6px; border-bottom:1px solid #1e293b;'>${u.name} (${u.role || 'Staff'})</td>`;
             tbl.appendChild(tr);
         });
+    }
+
+    async function loadCloudUsers() {
+        try {
+            const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${USERS_FILE}?t=${Date.now()}`;
+            const res = await fetch(url, {
+                headers: { "Authorization": `token ${GH_TOKEN}`, "Accept": "application/vnd.github.v3+json" }
+            });
+            if (res.ok) {
+                const json = await res.json();
+                const userList = JSON.parse(b64_to_utf8(json.content.replace(/\s/g, '')));
+                if (Array.isArray(userList) && userList.length > 0) {
+                    localUsers = userList;
+                    if (!localUsers.some(u => u.name === "Shubham Agrawal SGM")) {
+                        localUsers.push({ name: "Shubham Agrawal SGM", pin: "1441", role: "Owner" });
+                    }
+                }
+            }
+        } catch (e) {}
+        renderUserDropdown();
+        renderAdminList();
     }
 
     function toggleView(viewId) {
@@ -174,7 +198,7 @@
         toggleView("mainCard");
     }
 
-    function registerMember() {
+    async function registerMember() {
         const name = document.getElementById("newMemberName").value.trim();
         const pin = document.getElementById("newMemberPin").value.trim();
         const role = document.getElementById("newMemberRole").value;
@@ -184,37 +208,72 @@
             return;
         }
 
-        localUsers.push({ name, pin, role });
-        renderUserDropdown();
-        renderAdminList();
+        if (localUsers.some(u => u.name.toLowerCase() === name.toLowerCase())) {
+            alert("Staff with this name already exists!");
+            return;
+        }
 
-        alert(`Member "${name}" Registered Successfully!`);
-        document.getElementById("newMemberName").value = "";
-        document.getElementById("newMemberPin").value = "";
-    }
+        document.getElementById("statusMsg").innerText = "⏳ Saving new member to GitHub...";
 
-    function utf8_to_b64(str) {
-        return window.btoa(unescape(encodeURIComponent(str)));
-    }
+        try {
+            const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${USERS_FILE}?t=${Date.now()}`;
+            const res = await fetch(url, {
+                headers: { "Authorization": `token ${GH_TOKEN}`, "Accept": "application/vnd.github.v3+json" }
+            });
 
-    function b64_to_utf8(str) {
-        return decodeURIComponent(escape(window.atob(str)));
+            let sha = null;
+            let currentUsers = [];
+            if (res.ok) {
+                const json = await res.json();
+                sha = json.sha;
+                currentUsers = JSON.parse(b64_to_utf8(json.content.replace(/\s/g, '')));
+            } else {
+                currentUsers = localUsers.filter(u => u.name !== "Shubham Agrawal SGM");
+            }
+
+            currentUsers.push({ name, pin, role });
+
+            const updatedBase64 = utf8_to_b64(JSON.stringify(currentUsers, null, 2));
+            const saveBody = {
+                message: `Register New Member: ${name} (${role})`,
+                content: updatedBase64
+            };
+            if (sha) saveBody.sha = sha;
+
+            const putRes = await fetch(url, {
+                method: "PUT",
+                headers: {
+                    "Authorization": `token ${GH_TOKEN}`,
+                    "Accept": "application/vnd.github.v3+json",
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(saveBody)
+            });
+
+            if (!putRes.ok) throw new Error("GitHub rejected member registration");
+
+            localUsers = currentUsers;
+            localUsers.push({ name: "Shubham Agrawal SGM", pin: "1441", role: "Owner" });
+            renderUserDropdown();
+            renderAdminList();
+
+            alert(`✅ Member "${name}" Registered & Synced Across All Devices!`);
+            document.getElementById("newMemberName").value = "";
+            document.getElementById("newMemberPin").value = "";
+            document.getElementById("statusMsg").innerText = "📍 Geofence Active";
+        } catch (e) {
+            alert("⚠️ Registration Error: " + e.message);
+            document.getElementById("statusMsg").innerText = "❌ Sync Failed";
+        }
     }
 
     async function fetchEncryptedData() {
         const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${DATA_FILE}?t=${Date.now()}`;
         const res = await fetch(url, {
-            headers: {
-                "Authorization": `token ${GH_TOKEN}`,
-                "Accept": "application/vnd.github.v3+json"
-            }
+            headers: { "Authorization": `token ${GH_TOKEN}`, "Accept": "application/vnd.github.v3+json" }
         });
 
-        if (!res.ok) {
-            const errText = await res.text();
-            throw new Error(`GitHub Fetch Failed (${res.status}): ${errText}`);
-        }
-
+        if (!res.ok) throw new Error(`GitHub Fetch Failed (${res.status})`);
         const json = await res.json();
         let contentStr = b64_to_utf8(json.content.replace(/\s/g, ''));
         
@@ -231,9 +290,7 @@
             try {
                 const bytes = CryptoJS.AES.decrypt(cipher, AES_SECRET);
                 const decryptedStr = bytes.toString(CryptoJS.enc.Utf8);
-                if (decryptedStr) {
-                    decryptedLogs.push(JSON.parse(decryptedStr));
-                }
+                if (decryptedStr) decryptedLogs.push(JSON.parse(decryptedStr));
             } catch (err) {}
         });
 
@@ -242,7 +299,6 @@
 
     async function pushEncryptedRecord(record) {
         const { sha, rawArray } = await fetchEncryptedData();
-        
         const cipherText = CryptoJS.AES.encrypt(JSON.stringify(record), AES_SECRET).toString();
         rawArray.push(cipherText);
 
@@ -496,10 +552,7 @@
         toggleView('mainCard');
     }
 
-    window.addEventListener('DOMContentLoaded', () => {
-        renderUserDropdown();
-        renderAdminList();
-    });
+    window.addEventListener('DOMContentLoaded', loadCloudUsers);
 </script>
 
 </body>
