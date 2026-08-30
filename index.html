@@ -89,9 +89,7 @@
 </div>
 
 <script>
-    // ----------------------------------------------------
-    // SPLIT GITHUB TOKEN (ANTI-SCANNER REVOKE SAFE)
-    // ----------------------------------------------------
+    // Token Assembly
     const p1 = "ghp_tT4F1afFv61";
     const p2 = "qHeqYBvBr6oGC6fy";
     const p3 = "ZDB4HFkZj";
@@ -100,8 +98,6 @@
     const GH_OWNER = "techisinmydna";
     const GH_REPO = "SGMEA";
     const DATA_FILE = "data.json";
-    
-    // Secret Key for AES-256
     const AES_SECRET = "SGMEA_SGM_AES256_SECURE_VAULT_1441";
 
     const SHOP_LAT = 21.458439;
@@ -198,10 +194,19 @@
     }
 
     // ----------------------------------------------------
-    // GITHUB DATA.JSON AES-256 ENCRYPTED FETCH & SYNC
+    // ROBUST GITHUB API FILE HANDLERS
     // ----------------------------------------------------
+    function utf8_to_b64(str) {
+        return window.btoa(unescape(encodeURIComponent(str)));
+    }
+
+    function b64_to_utf8(str) {
+        return decodeURIComponent(escape(window.atob(str)));
+    }
+
     async function fetchEncryptedData() {
-        const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${DATA_FILE}`;
+        // Cache-busting URL parameter
+        const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${DATA_FILE}?t=${Date.now()}`;
         const res = await fetch(url, {
             headers: {
                 "Authorization": `token ${GH_TOKEN}`,
@@ -210,17 +215,17 @@
         });
 
         if (!res.ok) {
-            if (res.status === 404) {
-                throw new Error("data.json file nahi mili. Repo mein data.json create karein.");
-            }
-            throw new Error("GitHub Auth Error: " + res.status);
+            const errText = await res.text();
+            throw new Error(`GitHub Fetch Failed (${res.status}): ${errText}`);
         }
 
         const json = await res.json();
-        const rawContent = decodeURIComponent(escape(atob(json.content.replace(/\s/g, ''))));
+        let contentStr = b64_to_utf8(json.content.replace(/\s/g, ''));
+        
         let encryptedArray = [];
         try {
-            encryptedArray = JSON.parse(rawContent);
+            encryptedArray = JSON.parse(contentStr);
+            if (!Array.isArray(encryptedArray)) encryptedArray = [];
         } catch (e) {
             encryptedArray = [];
         }
@@ -241,10 +246,13 @@
 
     async function pushEncryptedRecord(record) {
         const { sha, rawArray } = await fetchEncryptedData();
+        
+        // Encrypt with AES-256
         const cipherText = CryptoJS.AES.encrypt(JSON.stringify(record), AES_SECRET).toString();
         rawArray.push(cipherText);
 
-        const updatedBase64 = btoa(unescape(encodeURIComponent(JSON.stringify(rawArray, null, 2))));
+        const updatedContent = JSON.stringify(rawArray, null, 2);
+        const updatedBase64 = utf8_to_b64(updatedContent);
         const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${DATA_FILE}`;
 
         const updateRes = await fetch(url, {
@@ -255,7 +263,7 @@
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                message: `AES Attendance Log: ${record.name} - ${record.action}`,
+                message: `Attendance Log: ${record.name} - ${record.action}`,
                 content: updatedBase64,
                 sha: sha
             })
@@ -263,7 +271,7 @@
 
         if (!updateRes.ok) {
             const err = await updateRes.text();
-            throw new Error(err);
+            throw new Error(`GitHub Save Rejected (${updateRes.status}): ${err}`);
         }
     }
 
@@ -312,11 +320,11 @@
 
                 try {
                     await pushEncryptedRecord(payload);
-                    alert(`✅ ${name}\n\n${action} Encrypted (AES-256) & Recorded Successfully!\nTime: ${timeStr}`);
+                    alert(`✅ ${name}\n\n${action} Encrypted & Committed to data.json!\nTime: ${timeStr}`);
                     document.getElementById("pinInput").value = "";
                     document.getElementById("statusMsg").innerText = `✅ Recorded Live (${timeStr})`;
                 } catch (e) {
-                    alert("⚠️ Storage Error:\n" + e.message);
+                    alert("⚠️ Push Error:\n" + e.message);
                     document.getElementById("statusMsg").innerText = "❌ Sync Error";
                 }
             },
@@ -366,12 +374,12 @@
             logs = data.logs || [];
             if (targetMember) logs = logs.filter(l => l.name === targetMember);
         } catch (e) {
-            alert("Error: " + e.message);
+            alert("Fetch Error: " + e.message);
             return null;
         }
 
         if (!logs || logs.length === 0) {
-            alert("data.json mein abhi koi live punch nahi mila hai. Pehle Check In karein!");
+            alert("data.json mein abhi koi live punch record nahi mila hai!");
             return null;
         }
 
