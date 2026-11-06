@@ -97,6 +97,8 @@
 
     const GH_OWNER = "TechIsInMyDNA";
     const GH_REPO = "SGMEA";
+    const DATA_BRANCH = "data-storage"; // Isolated branch to avoid triggering Pages deployment
+    const BASE_BRANCH = "main";
     const DATA_FILE = "data.json";
     const USERS_FILE = "users.json";
     const AES_SECRET = "SGMEA_SGM_AES256_SECURE_VAULT_1441";
@@ -123,6 +125,37 @@
 
     function utf8_to_b64(str) { return window.btoa(unescape(encodeURIComponent(str))); }
     function b64_to_utf8(str) { return decodeURIComponent(escape(window.atob(str))); }
+
+    // Auto-create storage branch if missing on first run
+    async function ensureDataBranch() {
+        try {
+            const checkUrl = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/branches/${DATA_BRANCH}`;
+            const res = await fetch(checkUrl, {
+                headers: { "Authorization": `token ${GH_TOKEN}`, "Accept": "application/vnd.github.v3+json" }
+            });
+            if (res.status === 404) {
+                const baseRes = await fetch(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/git/ref/heads/${BASE_BRANCH}`, {
+                    headers: { "Authorization": `token ${GH_TOKEN}`, "Accept": "application/vnd.github.v3+json" }
+                });
+                if (baseRes.ok) {
+                    const baseJson = await baseRes.json();
+                    const commitSha = baseJson.object.sha;
+                    await fetch(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/git/refs`, {
+                        method: "POST",
+                        headers: {
+                            "Authorization": `token ${GH_TOKEN}`,
+                            "Accept": "application/vnd.github.v3+json",
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            ref: `refs/heads/${DATA_BRANCH}`,
+                            sha: commitSha
+                        })
+                    });
+                }
+            }
+        } catch (e) {}
+    }
 
     function renderUserDropdown() {
         const select = document.getElementById("userSelect");
@@ -157,11 +190,21 @@
     }
 
     async function loadCloudUsers() {
+        await ensureDataBranch();
         try {
-            const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${USERS_FILE}?t=${Date.now()}`;
-            const res = await fetch(url, {
+            // First check isolated branch, fallback to main if just initialized
+            let url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${USERS_FILE}?ref=${DATA_BRANCH}&t=${Date.now()}`;
+            let res = await fetch(url, {
                 headers: { "Authorization": `token ${GH_TOKEN}`, "Accept": "application/vnd.github.v3+json" }
             });
+
+            if (!res.ok) {
+                url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${USERS_FILE}?ref=${BASE_BRANCH}&t=${Date.now()}`;
+                res = await fetch(url, {
+                    headers: { "Authorization": `token ${GH_TOKEN}`, "Accept": "application/vnd.github.v3+json" }
+                });
+            }
+
             if (res.ok) {
                 const json = await res.json();
                 const userList = JSON.parse(b64_to_utf8(json.content.replace(/\s/g, '')));
@@ -217,7 +260,8 @@
         document.getElementById("statusMsg").innerText = "Saving new member to GitHub...";
 
         try {
-            const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${USERS_FILE}?t=${Date.now()}`;
+            await ensureDataBranch();
+            const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${USERS_FILE}?ref=${DATA_BRANCH}&t=${Date.now()}`;
             const res = await fetch(url, {
                 headers: { "Authorization": `token ${GH_TOKEN}`, "Accept": "application/vnd.github.v3+json" }
             });
@@ -237,11 +281,12 @@
             const updatedBase64 = utf8_to_b64(JSON.stringify(currentUsers, null, 2));
             const saveBody = {
                 message: `Register New Member: ${name} (${role})`,
-                content: updatedBase64
+                content: updatedBase64,
+                branch: DATA_BRANCH
             };
             if (sha) saveBody.sha = sha;
 
-            const putRes = await fetch(url, {
+            const putRes = await fetch(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${USERS_FILE}`, {
                 method: "PUT",
                 headers: {
                     "Authorization": `token ${GH_TOKEN}`,
@@ -269,21 +314,35 @@
     }
 
     async function fetchEncryptedData() {
-        const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${DATA_FILE}?t=${Date.now()}`;
-        const res = await fetch(url, {
+        await ensureDataBranch();
+        let url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${DATA_FILE}?ref=${DATA_BRANCH}&t=${Date.now()}`;
+        let res = await fetch(url, {
             headers: { "Authorization": `token ${GH_TOKEN}`, "Accept": "application/vnd.github.v3+json" }
         });
 
-        if (!res.ok) throw new Error(`GitHub Fetch Failed (${res.status})`);
-        const json = await res.json();
-        let contentStr = b64_to_utf8(json.content.replace(/\s/g, ''));
-        
+        // Fallback to base branch if file is not in data branch yet
+        if (!res.ok) {
+            url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${DATA_FILE}?ref=${BASE_BRANCH}&t=${Date.now()}`;
+            res = await fetch(url, {
+                headers: { "Authorization": `token ${GH_TOKEN}`, "Accept": "application/vnd.github.v3+json" }
+            });
+        }
+
+        if (!res.ok && res.status !== 404) throw new Error(`GitHub Fetch Failed (${res.status})`);
+
+        let sha = null;
         let encryptedArray = [];
-        try {
-            encryptedArray = JSON.parse(contentStr);
-            if (!Array.isArray(encryptedArray)) encryptedArray = [];
-        } catch (e) {
-            encryptedArray = [];
+
+        if (res.ok) {
+            const json = await res.json();
+            sha = json.sha;
+            let contentStr = b64_to_utf8(json.content.replace(/\s/g, ''));
+            try {
+                encryptedArray = JSON.parse(contentStr);
+                if (!Array.isArray(encryptedArray)) encryptedArray = [];
+            } catch (e) {
+                encryptedArray = [];
+            }
         }
 
         const decryptedLogs = [];
@@ -295,10 +354,11 @@
             } catch (err) {}
         });
 
-        return { logs: decryptedLogs, sha: json.sha, rawArray: encryptedArray };
+        return { logs: decryptedLogs, sha: sha, rawArray: encryptedArray };
     }
 
     async function pushEncryptedRecord(record) {
+        await ensureDataBranch();
         const { sha, rawArray } = await fetchEncryptedData();
         const cipherText = CryptoJS.AES.encrypt(JSON.stringify(record), AES_SECRET).toString();
         rawArray.push(cipherText);
@@ -307,6 +367,13 @@
         const updatedBase64 = utf8_to_b64(updatedContent);
         const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${DATA_FILE}`;
 
+        const payload = {
+            message: `Attendance Log: ${record.name} - ${record.action}`,
+            content: updatedBase64,
+            branch: DATA_BRANCH
+        };
+        if (sha) payload.sha = sha;
+
         const updateRes = await fetch(url, {
             method: "PUT",
             headers: {
@@ -314,11 +381,7 @@
                 "Accept": "application/vnd.github.v3+json",
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({
-                message: `Attendance Log: ${record.name} - ${record.action}`,
-                content: updatedBase64,
-                sha: sha
-            })
+            body: JSON.stringify(payload)
         });
 
         if (!updateRes.ok) {
